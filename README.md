@@ -57,16 +57,5 @@ Below is a high-level architecture diagram (from `ddml_overview2.pdf`) showing t
 - Achieves **up to 3.6× faster training throughput** than PyTorch and Megatron-LM  
   while maintaining model accuracy.  
 - Reduces **pipeline idle time by up to 84%**.  
-- Keeps **profiling overhead under 13 minutes** (<3.5% of total training time). [oai_citation:0‡DFLOP__SIGMOD_26_.pdf](file-service://file_00000000c68861fa88f11c821ea98ea0) [oai_citation:1‡DFLOP__SIGMOD_26_.pdf](file-service://file_00000000c68861fa88f11c821ea98ea0)
-
----
-
-## 🚀 Performance Comparison
-
-| Model Configuration | Throughput Gain | Idle Time Reduction | Training Time Reduction |
-|---------------------|----------------|---------------------|--------------------------|
-| LLaVA-OV (Qwen-2.5 32B) | 2.7× | 84% | 38h → 14h |
-| LLaVA-OV (Llama-3 8B) | 2.3× | 82% | 24h → 10h |
-| InternVL 2.5 (Qwen-2.5 72B) | 3.6× | 83% | 60h → 22h |
 
 ---
