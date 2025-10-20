@@ -30,7 +30,9 @@ DFLOP consists of three core components:
 
 Below is a high-level architecture diagram (from `ddml_overview2.pdf`) showing the integration of DFLOP with a PyTorch-based training pipeline:
 
-![DFLOP System Overview](DFLOP_overview.png)
+<div align="center">
+  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="70%">
+</div>
 
 **Workflow Summary**
 
