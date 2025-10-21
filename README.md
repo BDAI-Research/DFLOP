@@ -34,7 +34,7 @@ DFLOP consists of three core components:
 ```bash
 cd dflop
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
----
+```
 
 ## 🧠 System Architecture
 
