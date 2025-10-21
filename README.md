@@ -29,17 +29,11 @@ DFLOP consists of three core components:
 
 ### Installation
 
-#### 1. Clone this repository and navigate to dflop folder
+#### Navigate to dflop folder and install package
 
 ```bash
-git clone git@github.com:BDAI-Research/DFLOP.git
 cd dflop
-```
-
-#### 2. Install Package
-```bash
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
-```
 ---
 
 ## 🧠 System Architecture
