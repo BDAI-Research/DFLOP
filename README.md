@@ -25,6 +25,22 @@ DFLOP consists of three core components:
    - Reduces GPU idle time caused by pipeline bubbles.
 
 ---
+## Getting Started
+
+### Installation
+
+#### 1. Clone this repository and navigate to dflop folder
+
+```bash
+git clone git@github.com:BDAI-Research/DFLOP.git
+cd dflop
+```
+
+#### 2. Install Package
+```bash
+pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
+```
+---
 
 ## 🧠 System Architecture
 
@@ -61,3 +77,4 @@ Below is a high-level architecture diagram (from `ddml_overview2.pdf`) showing t
 - Reduces **pipeline idle time by up to 84%**.  
 
 ---
+
