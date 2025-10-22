@@ -1,29 +1,32 @@
 #!/bin/bash
- 
-# --- 기본 설정 ---
-if [ -z "$1" ]; then
-    echo "오류: Node rank를 입력해야 합니다."
-    echo "사용법: $0 <rank_number>"
+
+# --- Argument check ---
+if [ "$#" -lt 4 ]; then
+    echo "Error: Missing arguments."
+    echo "Usage: $0 <num_nodes> <rank_number> <python_script_path> <master_addr>"
+    echo "Example: $0 5 0 /path/to/train.py xxx.xx.xx.xx"
     exit 1
 fi
-RANKNUM="$1"
 
+NNODES="$1"
+RANKNUM="$2"
+PYTHON_FILE="$3"
+MASTER_ADDR="$4"
 
+# --- Display configuration ---
+echo "========================================="
+echo "Launching DFLOP Profiling Engine with Parameters:"
+echo "  Number of Nodes : $NNODES"
+echo "  Node Rank       : $RANKNUM"
+echo "  Python Script   : $PYTHON_FILE"
+echo "  Master Address  : $MASTER_ADDR"
+echo "========================================="
+
+# --- Launch torchrun ---
 torchrun \
-  --nnodes=4 \
+  --nnodes="$NNODES" \
   --nproc-per-node=8 \
-  --master_addr=172.27.53.83 \
-  --master_port=25001 \
+  --master_addr="$MASTER_ADDR" \
+  --master_port=25000 \
   --node-rank="$RANKNUM" \
-  /giant-data/user/1113870/BDAI/dmllm_codes/ours_llavaov_ver3.py
-  # /giant-data/user/1113870/BDAI/dmllm_codes/ours_llavaov_abl.py
-
-
-#   --dp 2 \
-#   --tp 8 \
-#   --pp 4 \
-#   --llm_model_name=llama3 \
-#   --llm_size=70b \
-#   --vision_model_name=internvit \
-#   --vision_size=6b \
-#   --trial 1
+  "$PYTHON_FILE"
