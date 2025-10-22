@@ -22,7 +22,6 @@ import transformers
 import tokenizers
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 import torch.nn.functional as F
-# LLaVA 관련 모듈
 from llava.constants import (
     IGNORE_INDEX,
     DEFAULT_IMAGE_TOKEN,
@@ -40,7 +39,6 @@ from llava.model.multimodal_encoder.siglip_encoder import (
 )
 from llava.model.multimodal_projector.builder import build_vision_projector
 from llava.train.train import preprocess
-# torchtune 관련 모듈
 from torchtune_models import flashqwen2
 from torchtune.modules import TransformerDecoder
 from torchtune.modules.attention_utils import _MaskType

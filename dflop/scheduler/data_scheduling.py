@@ -288,9 +288,6 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
 
 if __name__ == "__main__":
     print("="*30, "Start Data Scheduling", "="*30)
-    with open("/giant-data/user/1113870/BDAI/dmllm_codes/data_sched_config.yaml", "r") as f:
-        config = yaml.safe_load(f)
-
     seed = config["seed"]
     num_batches = config["num_batches"]
     parallel_config = config["parallel_config"]
@@ -301,24 +298,6 @@ if __name__ == "__main__":
     llm_model_size = config["llm_model_size"]
     data_file_path = config["data_file_path"]
     num_training_steps = config["num_training_steps"]
-
-    dataset_path = "/giant-data/user/1113870/BDAI/LLaVA-NeXT/scripts/train/onevision.yaml"
-    if vision_model_name == "siglip":
-        image_size = 384
-        image_processor = SigLipImageProcessor()
-    elif vision_model_name == "internvit":
-        image_size = 448
-        image_processor = SigLipImageProcessor(size=(image_size, image_size), crop_size={"height": image_size, "width": image_size})
-    else:
-        raise ValueError(f"Unsupported vision model: {vision_model_name}")
-    if llm_model_name == "qwen2":
-        model_path = "/giant-data/team/4724/models/Qwen2.5-72B-Instruct"
-        vocab_size = 152064
-    elif llm_model_name == "llama3":
-        model_path = "/giant-data/team/4724/models/Meta-Llama-3-8B"
-        vocab_size = 128256
-    image_folder = "/giant-data/team/4724/datasets/llava_ov_data/llava_data"
-    video_folder = "/giant-data/team/4724/datasets/llava_ov_data/llava_video"
 
     vision_config = vision_configs[vision_model_name][vision_model_size]
     llm_config = llm_configs[llm_model_name][llm_model_size]

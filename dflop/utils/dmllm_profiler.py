@@ -162,16 +162,6 @@ def profile_vision_memory(image_size, vision_module, model_dtype, tp_plan):
     result_dict["model_mem"].append(model_mem)
     result_dict["fwd_peak"].append(fwd_peak)
     result_dict["model_state_peak"].append(model_state_peak)
-    # result_path = "/home/hyeonjun/dmllm_codes/paper_reuslts"
-    # df_path = os.path.join(result_path, f"memory_profile_{args.vision_model_name}_{args.vision_model_size}_{args.model_dtype}.csv")
-    # result_df = pd.DataFrame(profile_result)
-    # result_df["num_layers"] = args.num_hidden_layers
-    # result_df["tp_size"] = int(os.environ.get("WORLD_SIZE", 1))
-    # if global_rank == 0:
-    #     if os.path.exists(df_path):
-    #         prev_df = pd.read_csv(df_path)
-    #         result_df = pd.concat([prev_df, result_df], ignore_index=True)
-    #     result_df.to_csv(df_path, index=False)
     return result_dict
 
 def profile_llm_memory(llm_module, model_dtype, tp_plan):
@@ -202,16 +192,6 @@ def profile_llm_memory(llm_module, model_dtype, tp_plan):
     result_dict["model_mem"].append(model_mem)
     result_dict["fwd_peak"].append(fwd_peak)
     result_dict["model_state_peak"].append(model_state_peak)
-    # result_path = "/home/hyeonjun/dmllm_codes/paper_reuslts"
-    # df_path = os.path.join(result_path, f"memory_profile_{args.llm_model_name}_{args.llm_model_size}_{args.model_dtype}.csv")
-    # result_df = pd.DataFrame(profile_result)
-    # result_df["num_layers"] = args.num_hidden_layers
-    # result_df["tp_size"] = int(os.environ.get("WORLD_SIZE", 1))
-    # if global_rank == 0:
-    #     if os.path.exists(df_path):
-    #         prev_df = pd.read_csv(df_path)
-    #         result_df = pd.concat([prev_df, result_df], ignore_index=True)
-    #     result_df.to_csv(df_path, index=False)
     return result_dict
 
 if __name__ == "__main__":

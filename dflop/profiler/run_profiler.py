@@ -4,7 +4,6 @@ import argparse
 import torch.distributed as dist
 
 def main():
-    # --- (기존 ArgumentParser 및 task list 정의 부분은 동일) ---
     parser = argparse.ArgumentParser(description="Launcher for distributed profiling tasks")
     parser.add_argument('--mllm_model_name', type=str, default="llavaov", help='MLLM model name')
     parser.add_argument('--vision_model_name', type=str, default="siglip", help='Vision model name')
@@ -16,7 +15,7 @@ def main():
     script_path = "/giant-data/user/1113870/BDAI/dmllm_codes/profile_scripts"
     profiler_path = "/giant-data/user/1113870/BDAI/dmllm_codes/dmllm_profiler.py"
 
-    # --- (task list 정의 부분도 동일) ---
+    # Task definitions
     data_analysis_task = ["bash", f"{script_path}/run_dataset_analysis.sh", profiler_path, args.mllm_model_name, args.vision_model_name, args.llm_model_name]
     vision_mem_task = ["bash", f"{script_path}/run_mem_vision.sh", profiler_path, args.mllm_model_name, args.vision_model_name, args.vision_model_size]
     llm_mem_task = ["bash", f"{script_path}/run_mem_llm.sh", profiler_path, args.mllm_model_name, args.llm_model_name, args.llm_model_size]
@@ -24,11 +23,11 @@ def main():
     llm_thr_full_task = ["bash", f"{script_path}/run_thr_llm_full.sh", profiler_path, args.mllm_model_name, args.llm_model_name, args.llm_model_size]
     llm_thr_skip_attn_task = ["bash", f"{script_path}/run_thr_llm_skip_attn.sh", profiler_path, args.mllm_model_name, args.llm_model_name, args.llm_model_size]
     
-    # 분산 환경 초기화
+    # Initialize distributed environment
     dist.init_process_group("nccl")
     rank = dist.get_rank()
 
-    # 💡 1. 백그라운드 프로세스 핸들을 try 블록 외부에서 초기화
+    # Initialize background process handle outside try-block
     background_process = None
     
     try:
@@ -47,33 +46,33 @@ def main():
                 assigned_tasks.append(profiling_tasks[i])
 
         if not assigned_tasks:
-            print(f"Rank {rank}: No profiling task assigned, waiting...")
+            print(f"Rank {rank}: No profiling task assigned. Waiting...")
         else:
             for task_command in assigned_tasks:
                 print(f"Rank {rank}: Running profiling task: {task_command}")
-                # 이 부분에서 에러가 발생하면 except 블록으로 이동
+                # If an error occurs here, it will be caught by the except block
                 subprocess.run(task_command, check=True)
         
-        # 모든 랭크가 동기화될 때까지 대기
+        # Synchronize all ranks
         dist.barrier()
         
-        # 정상 종료 시, Rank 0은 백그라운드 프로세스가 끝날 때까지 기다림
+        # On normal exit, rank 0 waits for the background process to finish
         if rank == 0 and background_process:
             print("Rank 0: Main tasks finished. Waiting for background process to complete...")
             background_process.wait()
 
     except Exception as e:
-        # 에러 발생 시 모든 랭크에서 에러 메시지 출력
+        # On error, print message from every rank
         print(f"!!! An error occurred on Rank {rank}: {e}. Initiating cleanup. !!!")
     
     finally:
-        # 💡 2. 스크립트가 정상 종료되거나 에러로 종료될 때 항상 실행
+        # Always executed on normal or error exit
         if rank == 0 and background_process:
-            # poll()은 프로세스가 종료되었으면 exit code를, 실행 중이면 None을 반환
+            # poll() returns exit code if finished, or None if still running
             if background_process.poll() is None:
                 print("Rank 0: Main script is exiting. Terminating background data analysis task...")
-                background_process.terminate()  # 프로세스에 종료 신호(SIGTERM) 전송
-                background_process.wait()       # 프로세스가 완전히 종료될 때까지 대기
+                background_process.terminate()  # Send SIGTERM
+                background_process.wait()       # Wait for complete termination
 
         print(f"Rank {rank}: Destroying process group.")
         dist.destroy_process_group()

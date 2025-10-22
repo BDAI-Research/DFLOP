@@ -1,4 +1,3 @@
-
 import math
 import itertools
 import os
@@ -59,25 +58,17 @@ def vision_module_flops(gbs, in_channels, img_h, img_w, patch_dim, layers, hs, i
     img_seq_len = (img_h // patch_dim) * (img_w // patch_dim)
     attn_flops = 3 * ((8 * hs * hs * img_seq_len) + (4 * img_seq_len * img_seq_len * hs))
     mlp_flops = 3 * 4 * img_seq_len * hs * intermediate_size
-
-    # 전체 트랜스포머 연산량
     transformer_flops = gbs * layers * (attn_flops + mlp_flops)
-
-    # 4. Patch Embedding 연산량
-    embedding_flops = (
-        3 * 2 * gbs * hs * in_channels * img_h * img_w
-    )
-    mm_flops = mm_projector_flops(gbs, img_seq_len, hs, llm_features)  # mm_projector의 FLOPs
+    embedding_flops = 3 * 2 * gbs * hs * in_channels * img_h * img_w
+    mm_flops = mm_projector_flops(gbs, img_seq_len, hs, llm_features)
     total_flops = transformer_flops + embedding_flops + mm_flops
     if act_recomp:
-        total_flops = total_flops * (4/3)  
+        total_flops = total_flops * (4/3)
     return total_flops
 
 def llm_module_flops(seq_len, gbs, hidden_size, layers, query_groups, attention_heads, ffn_hidden_size, vocab_size, act_recomp=True):    
     causal_self_attn = True
-    gated_linear_multiplier = 2 # SwiGLU 사용
-
-    # --- Attention FLOPs (Qwen3와 동일) ---
+    gated_linear_multiplier = 2
     attention_flops = (
         3 * 2 * gbs * layers * seq_len * hidden_size * hidden_size *
         (
@@ -86,20 +77,14 @@ def llm_module_flops(seq_len, gbs, hidden_size, layers, query_groups, attention_
             + 1
         )
     )
-
-    # --- MLP FLOPs ---
     mlp_flops = (
         3 * 2 * gbs * layers * seq_len * hidden_size *
-        (1 + gated_linear_multiplier) *
-        ffn_hidden_size # 일반 ffn_hidden_size 사용
+        (1 + gated_linear_multiplier) * ffn_hidden_size
     )
-
-    # --- Vocab FLOPs (Qwen3와 동일) ---
     vocab_flops = 3 * 2 * gbs * seq_len * hidden_size * vocab_size
     total_flops = attention_flops + mlp_flops + vocab_flops
     if act_recomp:
         total_flops = total_flops * (4/3)
-    # print(f"Attention FLOPs: {attention_flops/1e12}, MLP FLOPs: {mlp_flops/1e12}, Vocab FLOPs: {vocab_flops/1e12}")
     return total_flops
 
 def get_attn_flops(seq_len, embed_dim, num_hidden_layers, act_recomp=True):
@@ -107,6 +92,7 @@ def get_attn_flops(seq_len, embed_dim, num_hidden_layers, act_recomp=True):
     if act_recomp:
         attn_flops = attn_flops * (4/3)
     return attn_flops
+
 
 def parse_vision_thr_df(vision_df, vision_model_name, vision_model_size, llm_model_name, llm_model_size):
     if vision_model_name == "siglip":
