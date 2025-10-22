@@ -3,9 +3,8 @@
 DFLOP is a **data-driven optimization framework** designed to improve distributed training efficiency for **Multimodal Large Language Models (MLLMs)**.  
 Unlike existing data-agnostic frameworks that parallelize computation blindly, DFLOP adapts parallelism and scheduling to the **real data characteristics**, mitigating computation imbalance and input-dependent performance variance.
 
----
 
-## 🔍 Overview
+## Overview
 
 DFLOP consists of three core components:
 
@@ -24,51 +23,66 @@ DFLOP consists of three core components:
    - Balances computation load across pipeline stages in real time.  
    - Reduces GPU idle time caused by pipeline bubbles.
 
----
+<div align="center">
+  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="70%">
+</div>
+
 ## Getting Started
 
 ### Installation
 
-#### Navigate to dflop folder and install package
+Navigate to dflop folder and install package
 
 ```bash
 cd dflop
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
-## 🧠 System Architecture
+### Download dataset
 
-Below is a high-level architecture diagram (from `ddml_overview2.pdf`) showing the integration of DFLOP with a PyTorch-based training pipeline:
+- [Single Image Dataset](https://huggingface.co/datasets/lmms-lab/LLaVA-OneVision-Data)
+- [Multiple Image Dataset](https://huggingface.co/datasets/lmms-lab/M4-Instruct-Data)
+- [Video Dataset](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K)
 
-<div align="center">
-  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="70%">
-</div>
+After downloading, set the dataset paths in [`configs/dataset_config.yaml`](configs/dataset_config.yaml).
 
-**Workflow Summary**
 
-1. **Model Profiler** builds performance models for memory and throughput.  
-2. **Data Profiler** samples dataset input shapes and builds input distribution statistics.  
-3. **3D Parallelism Optimizer** searches for the optimal configuration per module.  
-4. **Online Microbatch Scheduler** runs asynchronously during training to dynamically schedule microbatches.
+## How to Use DFLOP
 
----
+- `mllm_model_name` can be selected from the following options:
+  - **llavaov**
+  - **internvl**
 
-## ⚙️ Key Features
+- `llm_model_name` can be selected from:
+  - **qwen2.5**
+  - **llama3**
 
-| Component | Description | Techniques |
-|------------|--------------|-------------|
-| **Profiling Engine** | Builds predictive models from synthetic + real data | Linear interpolation over input shape space |
-| **3D Parallelism Optimizer** | Searches optimal tensor/pipeline/data parallel configuration | Expected makespan minimization |
-| **Online Microbatch Scheduler** | Balances runtime load via ILP optimization | Real-time dynamic scheduling |
-| **Inter-model Communicator** | Efficient communication between asymmetric DP groups | Gather/scatter across process groups |
+### Running the DFLOP Profiling Engine
+Navigate to [scripts](scripts) folder.
 
----
+The run_profiling_engine.sh script launches the Profiling Engine of DFLOP across multiple nodes.
 
-## 📊 Experimental Highlights
+Each node must have a unique rank_number, assigned sequentially (e.g., 0, 1, 2, 3, ...),
+so that every node can correctly identify its role in the distributed profiling job.
 
-- Achieves **up to 3.6× faster training throughput** than PyTorch and Megatron-LM  
-  while maintaining model accuracy.  
-- Reduces **pipeline idle time by up to 84%**.  
+```bash
+bash run_profiling_engine.sh <num_nodes> <rank_number> <./dflop/optimization/run_profiler.py> <master_addr>
+```
 
----
+### Running the Data-aware 3D Parallelism Optimizer
+After completing the profiling stage, run the **Data-aware 3D Parallelism Optimizer** to automatically search for optimal parallel configurations based on the profiling results.
 
+```bash
+bash run_data_aware_optimization.sh <./dflop/optimization/data_aware_optimizer.py>
+```
+
+### Training with the Online Microbatch Scheduler
+Once the optimized configuration is generated, you can start the training phase.
+During this stage, DFLOP’s Online Microbatch Scheduler runs asynchronously to dynamically balance workloads across GPU pipeline stages in real time. 
+
+Each node must have a unique rank_number, assigned sequentially (e.g., 0, 1, 2, 3, ...),
+so that every node can correctly identify its role in the distributed profiling job.
+
+```bash
+bash run_training.sh <num_nodes> <rank_number> <./dflop/train.py> <master_addr>
+```
