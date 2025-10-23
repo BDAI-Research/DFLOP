@@ -31,14 +31,18 @@ DFLOP consists of three core components:
 
 ### Installation
 
-Navigate to dflop folder and install package
-
+1. Navigate to dflop folder and install package
 ```bash
 cd dflop
 conda create -n dflop python=3.10 -y
 conda activate dflop
 pip install --upgrade pip  # enable PEP 660 support
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
+```
+
+2. Install additional packages
+```bash
+pip install flash-attn==2.7.3 --no-build-isolation
 ```
 
 ### Download dataset
