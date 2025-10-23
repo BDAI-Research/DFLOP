@@ -52,3 +52,6 @@ dev = [
     "torchtitan @ git+https://github.com/pytorch/torchtitan@d655e1673d5f15d31a9514092f281e744107d821",
     "torchtune @ git+https://github.com/pytorch/torchtune.git@05b3b076e91db12ab3ae9d325d77417be37f3beb",
 ]
+[tool.setuptools.packages.find]
+include = ["optimization*", "profiler*", "scheduler*", "utils*"]
+exclude = ["tests*", "docs*", "figure*"]

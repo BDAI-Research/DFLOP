@@ -1,0 +1,42 @@
+Metadata-Version: 2.4
+Name: dflop
+Version: 0.1.0
+Summary: Data-driven Framework for Multimodal LLM Optimization
+Requires-Python: >=3.10
+Requires-Dist: accelerate==1.10.1
+Requires-Dist: bitsandbytes==0.46.1
+Requires-Dist: blobfile==3.0.0
+Requires-Dist: datasets==4.0.0
+Requires-Dist: deepspeed==0.14.4
+Requires-Dist: flash-attn==2.7.3
+Requires-Dist: ninja==1.13.0
+Requires-Dist: numpy==1.26.1
+Requires-Dist: pandas==2.3.2
+Requires-Dist: peft==0.4.0
+Requires-Dist: protobuf==6.31.1
+Requires-Dist: scikit-learn==1.2.2
+Requires-Dist: scipy==1.15.3
+Requires-Dist: sentencepiece==0.1.99
+Requires-Dist: tokenizers==0.21.4
+Requires-Dist: torch==2.6.0+cu124
+Requires-Dist: torchao==0.12.0
+Requires-Dist: torchaudio==2.6.0+cu124
+Requires-Dist: torchdata==0.11.0
+Requires-Dist: torchvision==0.21.0+cu124
+Requires-Dist: transformers==4.51.0
+Requires-Dist: triton==3.2.0
+Requires-Dist: shortuuid
+Requires-Dist: pydantic
+Requires-Dist: markdown2[all]
+Requires-Dist: gradio==4.16.0
+Requires-Dist: gradio_client==0.8.1
+Requires-Dist: requests
+Requires-Dist: httpx==0.24.0
+Requires-Dist: uvicorn
+Requires-Dist: fastapi
+Requires-Dist: einops==0.6.1
+Requires-Dist: einops-exts==0.0.4
+Requires-Dist: timm==0.6.13
+Provides-Extra: dev
+Requires-Dist: torchtitan@ git+https://github.com/pytorch/torchtitan@d655e1673d5f15d31a9514092f281e744107d821 ; extra == "dev"
+Requires-Dist: torchtune@ git+https://github.com/pytorch/torchtune.git@05b3b076e91db12ab3ae9d325d77417be37f3beb ; extra == "dev"

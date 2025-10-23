@@ -35,6 +35,9 @@ Navigate to dflop folder and install package
 
 ```bash
 cd dflop
+conda create -n dflop python=3.10 -y
+conda activate dflop
+pip install --upgrade pip  # enable PEP 660 support
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
@@ -66,14 +69,14 @@ Each node must have a unique rank_number, assigned sequentially (e.g., 0, 1, 2, 
 so that every node can correctly identify its role in the distributed profiling job.
 
 ```bash
-bash run_profiling_engine.sh <num_nodes> <rank_number> <./dflop/optimization/run_profiler.py> <master_addr>
+bash run_profiling_engine.sh <num_nodes> <rank_number> </path/to/dflop/optimization/run_profiler.py> <master_addr>
 ```
 
 ### Running the Data-aware 3D Parallelism Optimizer
 After completing the profiling stage, run the **Data-aware 3D Parallelism Optimizer** to automatically search for optimal parallel configurations based on the profiling results.
 
 ```bash
-bash run_data_aware_optimization.sh <./dflop/optimization/data_aware_optimizer.py>
+bash run_data_aware_optimization.sh </path/to/dflop/optimization/data_aware_optimizer.py>
 ```
 
 ### Training with the Online Microbatch Scheduler
@@ -84,5 +87,5 @@ Each node must have a unique rank_number, assigned sequentially (e.g., 0, 1, 2, 
 so that every node can correctly identify its role in the distributed profiling job.
 
 ```bash
-bash run_training.sh <num_nodes> <rank_number> <./dflop/train.py> <master_addr>
+bash run_training.sh <num_nodes> <rank_number> </path/to/dflop/train.py> <master_addr>
 ```
