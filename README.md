@@ -31,9 +31,8 @@ DFLOP consists of three core components:
 
 ### Installation
 
-1. Navigate to dflop folder and install package
+1. Install package
 ```bash
-cd dflop
 conda create -n dflop python=3.10 -y
 conda activate dflop
 pip install --upgrade pip  # enable PEP 660 support
