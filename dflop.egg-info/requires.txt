@@ -1,0 +1,37 @@
+accelerate==1.10.1
+bitsandbytes==0.46.1
+blobfile==3.0.0
+datasets==4.0.0
+deepspeed==0.14.4
+ninja==1.13.0
+numpy==1.26.1
+pandas==2.3.2
+peft==0.4.0
+protobuf==6.31.1
+scikit-learn==1.2.2
+scipy==1.15.3
+sentencepiece==0.1.99
+tokenizers==0.21.4
+torch==2.6.0+cu124
+torchao==0.12.0
+torchaudio==2.6.0+cu124
+torchdata==0.11.0
+torchvision==0.21.0+cu124
+transformers==4.51.0
+triton==3.2.0
+shortuuid
+pydantic
+markdown2[all]
+gradio==4.16.0
+gradio_client==0.8.1
+requests
+httpx==0.24.0
+uvicorn
+fastapi
+einops==0.6.1
+einops-exts==0.0.4
+timm==0.6.13
+
+[dev]
+torchtitan@ git+https://github.com/pytorch/torchtitan@d655e1673d5f15d31a9514092f281e744107d821
+torchtune@ git+https://github.com/pytorch/torchtune.git@05b3b076e91db12ab3ae9d325d77417be37f3beb
