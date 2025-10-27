@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-dflop.egg-info/PKG-INFO
-dflop.egg-info/SOURCES.txt
-dflop.egg-info/dependency_links.txt
-dflop.egg-info/requires.txt
-dflop.egg-info/top_level.txt

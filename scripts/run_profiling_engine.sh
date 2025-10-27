@@ -12,6 +12,7 @@ NNODES="$1"
 RANKNUM="$2"
 PYTHON_FILE="$3"
 MASTER_ADDR="$4"
+PYTHON_ARGS=("${@:5}")
 
 # --- Display configuration ---
 echo "========================================="
@@ -30,3 +31,4 @@ torchrun \
   --master_port=25000 \
   --node-rank="$RANKNUM" \
   "$PYTHON_FILE" \
+  "${PYTHON_ARGS[@]}"
