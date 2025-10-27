@@ -1,0 +1,36 @@
+models:
+  mllm: llavaov
+  vision:
+    name: siglip
+    size: 6b
+  llm:
+    name: qwen2.5
+    size: 7b
+
+model_paths:
+  qwen2.5: #/path/to/your/qwen2.5/model
+  llama3: #/path/to/your/llama3/model
+
+paths:
+  image_folder: #/path/to/your/image/folder
+  video_folder: #/path/to/your/video/folder
+  result_dir: #/path/to/save/results
+
+profiling:
+  tasks:
+    - data_analysis
+    - vision_memory
+    - llm_memory
+    - vision_throughput
+    - llm_throughput_full
+    - llm_throughput_skip_attn
+  log_level: INFO
+  stop_on_failure: false
+  model_dtype: bfloat16
+
+hardware:
+  n_gpus: # of GPUs to use for profiling
+  gpu_memory_gb: # GPU memory in GB per GPU
+
+training:
+  global_batch_size: # Global batch size for training
