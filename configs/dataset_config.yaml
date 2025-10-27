@@ -1,0 +1,15 @@
+datasets:
+- json_path: /path/to/dataset/llava_wild_4v_39k.json
+  sampling_strategy: "first:30%"
+- json_path: /path/to/dataset/llava_wild_4v_12k.json
+  sampling_strategy: "first:30%"
+- json_path: /path/to/dataset/ai2d_azuregpt_detailed_understanding_4874.json
+  sampling_strategy: "first:30%"
+- json_path: /path/to/dataset/infographic_vqa_4404.json
+  sampling_strategy: "first:30%"
+- json_path: /path/to/dataset/m4_instruct_annotations.json
+  sampling_strategy: "first:60000"
+- json_path: /path/to/dataset/0_30_s_academic_oe_v0_1_qa_processed.json
+  sampling_strategy: "all"
+- json_path: /path/to/dataset/0_30_s_academic_v0_1_cap_processed.json
+  sampling_strategy: "all"
