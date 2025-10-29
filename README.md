@@ -79,7 +79,7 @@ bash run_profiling_engine.sh <num_nodes> <rank_number> </path/to/dflop/optimizat
 After completing the profiling stage, run the **Data-aware 3D Parallelism Optimizer** to automatically search for optimal parallel configurations based on the profiling results.
 
 ```bash
-bash run_data_aware_optimization.sh </path/to/dflop/optimization/data_aware_optimizer.py>
+bash run_data_aware_optimization.sh
 ```
 
 ### Training with the Online Microbatch Scheduler
