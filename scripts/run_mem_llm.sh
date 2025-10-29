@@ -1,31 +1,24 @@
 #!/bin/bash
 
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <profiler_script_path> <config_path>"
+if [ "$#" -ne 4 ]; then
+    echo "Usage: $0 <script_path> <mllm_model_name> <llm_model_name> <llm_model_size>"
     exit 1
 fi
 
-SCRIPT_PATH="$1"
-CONFIG_PATH="$2"
+SCRIPT_PATH=$1
+MLLM_MODEL_NAME=$2
+LLM_MODEL_NAME=$3
+LLM_MODEL_SIZE=$4
 
-if [ ! -f "$SCRIPT_PATH" ]; then
-    echo "Error: profiler script not found at $SCRIPT_PATH"
-    exit 1
-fi
-
-if [ ! -f "$CONFIG_PATH" ]; then
-    echo "Error: config file not found at $CONFIG_PATH"
-    exit 1
-fi
-
-CONFIG_PATH="$(realpath "$CONFIG_PATH")"
-PROFILE_MODE="${PROFILE_MODE:-mem}"
-
-echo "Running LLM memory profiling (mode=${PROFILE_MODE}) using config: ${CONFIG_PATH}"
+echo "Running memory profiler with MLLM: ${MLLM_MODEL_NAME}, LLM: ${LLM_MODEL_NAME}, Size: ${LLM_MODEL_SIZE}"
 for TP_SIZE in 1 2 4 8; do
     for LAYERS in 3 4; do
         echo "=== Running with TP size=${TP_SIZE} num_hidden_layers=${LAYERS} ==="
-        DFLOP_CONFIG="$CONFIG_PATH" PROFILE_MODE="$PROFILE_MODE" NUM_HIDDEN_LAYERS="$LAYERS" \
-            torchrun --nproc-per-node="$TP_SIZE" "$SCRIPT_PATH"
+        torchrun --nproc-per-node=$TP_SIZE "${SCRIPT_PATH}" \
+            --mllm_model_name "${MLLM_MODEL_NAME}" \
+            --llm_model_name "${LLM_MODEL_NAME}" \
+            --llm_model_size "${LLM_MODEL_SIZE}" \
+            --num_hidden_layers "${LAYERS}" \
+            --profile_mode mem
     done
 done

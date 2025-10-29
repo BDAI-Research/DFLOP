@@ -1,10 +1,9 @@
 import os
-from datetime import timedelta
-from typing import Any, Dict, Optional
-
 import numpy as np
 import torch
 import torch.distributed as dist
+from datetime import timedelta
+from typing import Any, Dict, Optional
 from torch import nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
@@ -14,17 +13,9 @@ from torch.distributed.tensor import Replicate
 from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel
 from torchtune.modules.attention import MultiHeadAttention
 from torchtune.modules.model_fusion import DeepFusionModel, EarlyFusionModel
-from torchtune_models import FlashMultiHeadAttention
-
-from dmllm_utils.internvit_modules import InternAttention
+from .torchtune_models import FlashMultiHeadAttention
+from .internvit_modules import InternAttention
 from llava.model.multimodal_encoder.siglip_encoder import SigLipAttention
-
-try:
-    from dmllm_utils.qwenvit_modules import Qwen2_5_VLVisionFlashAttention2
-except ImportError:  # pragma: no cover - fallback for environments without local module
-    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (  # type: ignore
-        Qwen2_5_VLVisionFlashAttention2,
-    )
 
 
 llava_ov_siglip_tp_plan = {
@@ -142,12 +133,6 @@ def prepare_mha_for_tp(model: nn.Module, tp_mesh: DeviceMesh) -> nn.Module:
             module.k_norm.weight = nn.Parameter(
                 torch.ones(module.k_norm.weight.shape[0] // tp_size, device=module.k_norm.weight.device)
             )
-        if isinstance(module, Qwen2_5_VLVisionFlashAttention2):
-            if module.num_heads % tp_size != 0:
-                raise ValueError(
-                    f"Number of attention heads ({module.num_heads}) must be divisible by tensor parallel size ({tp_size})."
-                )
-            module.num_heads //= tp_size
     if is_fusion_model:
         model.decoder = decoder
     return model

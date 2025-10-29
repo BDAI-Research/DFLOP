@@ -34,10 +34,8 @@ class IndexProducer(threading.Thread):
                         return idx_dict[str(iter_id)]["vision"]
                     elif self.module == "llm":
                         return idx_dict[str(iter_id)]["llm"][str(self.dp_rank)]
-                # print(f"[Producer] Waiting for iteration {iter_id} data...")
                 time.sleep(1)
             except (FileNotFoundError, json.JSONDecodeError):
-                # print(f"[Producer] Waiting for {self.idx_path} to be created...")
                 time.sleep(2)
 
 class QueueBatchSampler(Sampler[List[int]]):

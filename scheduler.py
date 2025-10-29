@@ -6,17 +6,15 @@ import transformers
 import torch
 import yaml
 import numpy as np
-
+from ortools.sat.python import cp_model
 from typing import Dict, Sequence
 from torch.utils.data import DataLoader
-
 from torch.utils.data import DataLoader, RandomSampler
-from dmllm_utils.data_utils import TrainConfig, LazySupervisedDataset, DataCollatorForSupervisedDataset, SigLipImageProcessor
-from dmllm_utils.utils import llm_configs, vision_configs
 from llava.constants import IGNORE_INDEX
 from llava.model.multimodal_encoder.siglip_encoder import SigLipImageProcessor
-from ortools.sat.python import cp_model
-from utils.config import (
+from dflop.data import TrainConfig, LazySupervisedDataset, DataCollatorForSupervisedDataset, SigLipImageProcessor
+from dflop.model import llm_configs, vision_configs
+from dflop.config import (
     get_config_path,
     load_config,
     resolve_path,
@@ -57,8 +55,6 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
 
         self.vision_num_layers = vision_config.num_hidden_layers
         self.llm_num_layers = llm_config["num_layers"]
-        # self.vision_num_layers = int(np.ceil(vision_config.num_hidden_layers / self.v_pp_size))
-        # self.llm_num_layers = int(np.ceil(llm_config["num_layers"] / self.l_pp_size))
 
     def mm_projector_flops(self, gbs, seq_len, vision_features, llm_features, act_recomp=True):
         flops1 = 2 * gbs * seq_len * vision_features * llm_features
@@ -73,11 +69,7 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
         img_seq_len = (img_h // patch_dim) * (img_w // patch_dim)
         attn_flops = 3 * ((8 * hs * hs * img_seq_len) + (4 * img_seq_len * img_seq_len * hs))
         mlp_flops = 3 * 4 * img_seq_len * hs * intermediate_size
-
-        # 전체 트랜스포머 연산량
         transformer_flops = gbs * layers * (attn_flops + mlp_flops)
-
-        # 4. Patch Embedding 연산량
         embedding_flops = (
             3 * 2 * gbs * hs * in_channels * img_h * img_w
         )

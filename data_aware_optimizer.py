@@ -1,14 +1,11 @@
-import math
-import itertools
 import os
 import pickle
 import pandas as pd
 import numpy as np
 from copy import deepcopy
 from scipy.interpolate import interp1d
-from utils.model import llm_configs, vision_configs
-from collections import defaultdict
-from utils.config import (
+from dflop.model import llm_configs, vision_configs
+from dflop.config import (
     get_config_path,
     load_config,
     resolve_path,
@@ -37,7 +34,6 @@ class ModelMem:
         model_cur_mem, model_state_mem = calculate_model_peak(self.model_mem_factors, num_layers, tp)
         act_mem = total_pp * calculate_act_peak(self.act_mem_factors, num_layers, tp, batch_size, seq_len)
         peak_mem = calculate_peak_mem(model_cur_mem, model_state_mem, act_mem)
-        # print(f"Current : {model_cur_mem:.2f}, State : {model_state_mem:.2f}, Act : {act_mem:.2f}, Peak : {peak_mem:.2f}")
         return peak_mem
 
 
@@ -90,11 +86,7 @@ def vision_module_flops(gbs, in_channels, img_h, img_w, patch_dim, layers, hs, i
     img_seq_len = (img_h // patch_dim) * (img_w // patch_dim)
     attn_flops = 3 * ((8 * hs * hs * img_seq_len) + (4 * img_seq_len * img_seq_len * hs))
     mlp_flops = 3 * 4 * img_seq_len * hs * intermediate_size
-
-    # 전체 트랜스포머 연산량
     transformer_flops = gbs * layers * (attn_flops + mlp_flops)
-
-    # 4. Patch Embedding 연산량
     embedding_flops = (
         3 * 2 * gbs * hs * in_channels * img_h * img_w
     )
@@ -106,9 +98,9 @@ def vision_module_flops(gbs, in_channels, img_h, img_w, patch_dim, layers, hs, i
 
 def llm_module_flops(seq_len, gbs, hidden_size, layers, query_groups, attention_heads, ffn_hidden_size, vocab_size, act_recomp=True):    
     causal_self_attn = True
-    gated_linear_multiplier = 2 # SwiGLU 사용
+    gated_linear_multiplier = 2
 
-    # --- Attention FLOPs (Qwen3와 동일) ---
+    # --- Attention FLOPs ---
     attention_flops = (
         3 * 2 * gbs * layers * seq_len * hidden_size * hidden_size *
         (
@@ -125,12 +117,11 @@ def llm_module_flops(seq_len, gbs, hidden_size, layers, query_groups, attention_
         ffn_hidden_size # 일반 ffn_hidden_size 사용
     )
 
-    # --- Vocab FLOPs (Qwen3와 동일) ---
+    # --- Vocab FLOPs ---
     vocab_flops = 3 * 2 * gbs * seq_len * hidden_size * vocab_size
     total_flops = attention_flops + mlp_flops + vocab_flops
     if act_recomp:
         total_flops = total_flops * (4/3)
-    # print(f"Attention FLOPs: {attention_flops/1e12}, MLP FLOPs: {mlp_flops/1e12}, Vocab FLOPs: {vocab_flops/1e12}")
     return total_flops
 
 def get_attn_flops(seq_len, embed_dim, num_hidden_layers, act_recomp=True):
@@ -159,7 +150,6 @@ def parse_vision_thr_df(vision_df, vision_model_name, vision_model_size, llm_mod
     vision_df["model_flops"] = vision_df[["batch_size", "num_layers"]].apply(lambda x: vision_module_flops(x[0], in_channels, img_h, img_w, patch_dim, x[1], hs, intermediate_size, llm_hidden_size), axis=1)
     vision_df["model_thr"] = vision_df["model_flops"] / (vision_df["model_time"] * 1e12 * vision_df["tp_size"]) * 1000
     vision_df = vision_df[["batch_size", "num_layers", "model_thr", "tp_size"]].round(2)
-    # target_df = vision_df[vision_df["num_layers"]==8].reset_index(drop=True)
     return vision_df
 
 def parse_llm_thr_df(llm_full_df, llm_skip_attn_df, llm_configs, llm_model_name, llm_model_size):
@@ -185,7 +175,6 @@ def parse_llm_thr_df(llm_full_df, llm_skip_attn_df, llm_configs, llm_model_name,
     merged_df["attn_thr"] = merged_df["attn_flops"] / (merged_df["attn_time"] * 1e12 * merged_df["tp_size"]) * 1000
     merged_df["linear_thr"] = merged_df["linear_flops"] / (merged_df["linear_time"] * 1e12 * merged_df["tp_size"]) * 1000
     merged_df = merged_df[["seq_len", "num_layers", "tp_size", "attn_thr", "linear_thr"]].round(2)
-    # merged_df = merged_df[merged_df["num_layers"] == 8].reset_index(drop=True)
     return merged_df
 
 def get_vision_tp_thr(df, tp_size):
@@ -226,7 +215,7 @@ def get_thr_prof(result_path, mllm_model_name, vision_model_name, vision_model_s
     vision_df_path = f"{result_path}/thr_{mllm_model_name}_{vision_model_name}_{vision_model_size}.csv"
     llm_full_df_path = f"{result_path}/thr_{mllm_model_name}_{llm_model_name}_{llm_model_size}.csv"
     llm_skip_attn_df_path = f"{result_path}/thr_{mllm_model_name}_{llm_model_name}_{llm_model_size}_skip_attn.csv"
-    ## Vision Profiling Results
+    # Vision Profiling Results
     vision_df = pd.read_csv(vision_df_path)
     parsed_vision_df = parse_vision_thr_df(vision_df, vision_model_name, vision_model_size, llm_model_name, llm_model_size)
     vision_tp_list = parsed_vision_df["tp_size"].unique().tolist()
@@ -235,7 +224,7 @@ def get_thr_prof(result_path, mllm_model_name, vision_model_name, vision_model_s
         vision_model_tp = get_vision_tp_thr(parsed_vision_df, tp)
         vision_thr_dict[tp].append(vision_model_tp)
 
-    ## LLM Profiling Results
+    # LLM Profiling Results
     llm_full_df = pd.read_csv(llm_full_df_path)
     llm_skip_attn_df = pd.read_csv(llm_skip_attn_df_path)
     llm_full_df = llm_full_df[["seq_len", "num_layers", "tp_size", "model_time"]]
@@ -263,16 +252,12 @@ def calculate_act_peak(act_peak_tp, num_layers, tp_size, batch_size, seq_len):
     return act_tp
 
 def calculate_throughput_factor(tp, factors):
-    """TP에 따른 throughput 계수 계산"""
     if tp == 1: return 1.0
     val = 1.0
-    # Note: This simplified calculation assumes factors are for powers of 2.
-    # A more robust implementation might use logarithms as in the formula.
     if tp in factors: val = factors[tp]
     return val
 
 def calculate_duration(flops, base_thr, tp, pp, dp, factors, num_microbatches, total_pp):
-    """파이프라인 수행 시간을 계산하는 함수"""
     if not all([tp, pp, dp, total_pp]): return float('inf')
     
     throughput_factor = calculate_throughput_factor(tp, factors)
@@ -283,7 +268,6 @@ def calculate_duration(flops, base_thr, tp, pp, dp, factors, num_microbatches, t
 
 
 def calculate_peak_mem(model_cur_mem, model_state_mem, act_mem, buffer_ratio=1.25):
-    # model_mem = max(model_cur_mem + act_mem, model_state_mem) * buffer_ratio
     model_mem = (model_state_mem + act_mem) * buffer_ratio
     return model_mem
 
@@ -378,9 +362,6 @@ if __name__=="__main__":
         hs = vision_config.hidden_size
         intermediate_size = vision_config.intermediate_size
     vision_flops = np.array([vision_module_flops(img_batch_size, in_channels, img_h, img_w, patch_dim, vision_num_layers, hs, intermediate_size, llm_hidden_size)/1e12 for img_batch_size in image_batch_list])
-
-
-
     llm_flops = np.array([llm_module_flops(llm_seq_len, 1, hidden_size, llm_num_layers, query_groups, attention_heads, ffn_hidden_size, vocab_size, act_recomp=True)/1e12 for llm_seq_len in llm_input_seq_list])
     attn_flops = np.array([get_attn_flops(llm_seq_len, hidden_size, llm_num_layers, act_recomp=True) for llm_seq_len in llm_input_seq_list])/1e12
     linear_flops = llm_flops - attn_flops
@@ -419,28 +400,22 @@ if __name__=="__main__":
             for seq_len in [1024,2048,4096,8192]:
                 llm_thr_result = l_thr[tp_size](seq_len).item()
                 llm_thr_result_list.append((tp_size, seq_len, llm_thr_result))
-    # parallel_configs = []
- 
 parallel_configs = []
 for v_gpus in range(1, n_gpus):
     l_gpus = n_gpus - v_gpus
     v_configs = []
     for v_tp in v_thr.keys():
         if v_gpus % v_tp == 0:
-            # v_pp * v_dp가 되어야 할 값
             v_rem = v_gpus // v_tp
             for v_pp in range(1, v_rem + 1):
                 if v_rem % v_pp == 0:
                     v_dp = v_rem // v_pp
                     v_configs.append([v_tp, v_pp, v_dp])
-    
     if not v_configs:
         continue
-
     l_configs = []
     for l_tp in llm_thr_dict.keys():
         if l_gpus % l_tp == 0:
-            # l_pp * l_dp가 되어야 할 값
             l_rem = l_gpus // l_tp
             for l_pp in range(1, l_rem + 1):
                 if l_rem % l_pp == 0:
@@ -470,11 +445,8 @@ for p_config in parallel_configs:
         target_seq_len = mean_seq_len * l_mbs
         if v_mbs < 1 or l_mbs < 1:
             continue
-        # if target_batch_size > max_batch_size or target_seq_len > max_seq_len:
-        #     continue
         if target_batch_size <= max_batch_size and target_seq_len <= max_seq_len:
             break
-        # print(f"Passed batch/seq check for config: {p_config} with m: {m}, v_mbs: {v_mbs}, l_mbs: {l_mbs}, target_batch_size: {target_batch_size}, target_seq_len: {target_seq_len}")
     target_v_thr = v_thr[v_tp][0](target_batch_size)
     target_l_thr = l_thr[l_tp](target_seq_len)
     v_flop = (mean_v_flop * v_mbs)
@@ -483,7 +455,6 @@ for p_config in parallel_configs:
     l_dur = l_flop / (target_l_thr * l_tp * l_pp)
     slowest_stage = max(v_dur, l_dur)
     duration = (m + v_pp + l_pp - 1) * slowest_stage
-    
     if (duration < min_dur * 1.1) and (m < opt_m_batches):
         opt_m_batches = m
         min_dur = duration
@@ -509,7 +480,6 @@ for p_config in parallel_configs:
             "v_thr" : target_v_thr,
             "l_thr" : target_l_thr,
         }
-
 if opt_config is not None and 'log_dict' in locals():
     print("\n--- Optimal 3D parallelism ---")
     for k, v in log_dict.items():

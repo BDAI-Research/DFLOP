@@ -600,10 +600,6 @@ class ScheduleGPipe(PipelineScheduleSingle):
         # Delay send waits
         self.set_stage_info(input_meta, output_meta)
         fwd_sends_to_wait: List[dist.Work] = []
-        fwd_start = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        fwd_end = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        bwd_start = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        bwd_end = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
 
         # Run microbatches
         for i in range(self._n_microbatches):
@@ -614,18 +610,12 @@ class ScheduleGPipe(PipelineScheduleSingle):
                     work.wait()
                 # if self._stage.stage_index == 3:
                 #     print(f"Rank {self._stage.device} Forwarding microbatch {i} with args: ", arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
-                fwd_start[i].record()
                 output = self._stage.forward_one_chunk(i, arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
-                if not self._stage.is_last:
-                    fwd_end[i].record()
                 ops = self._stage.get_fwd_send_ops(i)
                 works = _sorted_batch_p2p(ops, desc="fwd_send")
                 fwd_sends_to_wait.extend(works.values())
-
             logger.debug("[%s] Forwarded microbatch %s", self._stage.stage_index, i)           
             self._maybe_compute_loss(self._stage, output, target_mbs, i)
-            if self._stage.is_last:
-                fwd_end[i].record()
         # print(f"Rank {self._stage.device} Forwarded all microbatches")
         # Wait for all forward sends to finish
         # This should not have performance impact because by the time the first
@@ -646,13 +636,10 @@ class ScheduleGPipe(PipelineScheduleSingle):
                 works = _sorted_batch_p2p(ops, desc="bwd_recv")
                 for work in works.values():
                     work.wait()
-
-                bwd_start[i].record()
                 loss = self._maybe_get_loss(self._stage, i)
                 self._stage.backward_one_chunk(
                     i, loss=loss, last_backward=i == self._n_microbatches - 1
                 )
-                bwd_end[i].record()
                 ops = self._stage.get_bwd_send_ops(i)
                 works = _sorted_batch_p2p(ops, desc="bwd_send")
                 bwd_sends_to_wait.extend(works.values())
@@ -665,8 +652,6 @@ class ScheduleGPipe(PipelineScheduleSingle):
         # Wait for all backward sends to finish
         for work in bwd_sends_to_wait:
             work.wait()
-        # torch.cuda.synchronize()
-
 
 class Schedule1F1B(PipelineScheduleSingle):
     """
@@ -714,30 +699,13 @@ class Schedule1F1B(PipelineScheduleSingle):
         # Warmup phase
         send_work = None
         fwd_sends = []
-        # fwd_start = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        # fwd_end = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        # bwd_start = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        # bwd_end = [torch.cuda.Event(enable_timing=True) for _ in range(self._n_microbatches)]
-        # before_m_train = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}] Before Micro Step Peak: {before_m_step:.2f} GB")
-        #     print(f"[Rank {torch.distributed.get_rank()}] After set_stage_info Peak: {after_set_stage_info:.2f} GB")
-        #     print(f"[Rank {torch.distributed.get_rank()}] Before Micro Train Peak: {before_m_train:.2f} GB")
         for _ in range(warmup_chunks):
             # Receive activations
             fwd_recvs = self._stage.get_fwd_recv_ops(fwd_mb_index)
             if recv_work := _batch_p2p(fwd_recvs, desc="fwd_recv"):
                 recv_work.wait()
-
-            # fwd_start[fwd_mb_index].record()
             # Compute
-            # torch.cuda.synchronize()
-            # start_fwd = time.time()
             output = self._stage.forward_one_chunk(fwd_mb_index, arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
-            # if not (self._stage.is_last and self._stage.is_llm):
-                # fwd_end[fwd_mb_index].record()
-                # torch.cuda.synchronize()
-                # end_fwd = time.time()
 
             # Clear previous chunk's forward sends (hopefully they have well
             # finished, otherwise, we are heavily communication bound, in which
@@ -756,11 +724,6 @@ class Schedule1F1B(PipelineScheduleSingle):
 
             # Compute loss
             self._maybe_compute_loss(self._stage, output, target_mbs, fwd_mb_index)
-            # if (self._stage.is_last and self._stage.is_llm):
-            #     # fwd_end[fwd_mb_index].record()
-            #     torch.cuda.synchronize()
-            #     end_fwd = time.time()
-            # time_dict["fwd"].append([start_fwd, end_fwd])
             fwd_mb_index += 1
         # Now we should have send ops left over, to be fused with first 1B of 1B1F phase below.
         # print(f"[Rank {self._stage.device.index}] warmup end across all microbatches")
@@ -772,22 +735,12 @@ class Schedule1F1B(PipelineScheduleSingle):
             # Now, we need to fire the fwd_sends and bwd_recvs together
             if fuse_work := _batch_p2p(fwd_sends + bwd_recvs, desc="fwd_send_bwd_recv"):
                 fuse_work.wait()
-            # print(f"[Rank {torch.distributed.get_rank()}] recv grad {bwd_mb_index}")
-            # Backward one chunk
-            # bwd_start[bwd_mb_index].record()
-            # torch.cuda.synchronize()
-            # start_bwd = time.time()
-            # bwd_start = torch.cuda.Event(enable_timing=True)
             loss = self._maybe_get_loss(self._stage, bwd_mb_index)
             self._stage.backward_one_chunk(
                 bwd_mb_index,
                 loss=loss,
                 last_backward=bwd_mb_index == self._n_microbatches - 1,
             )
-            # bwd_end[bwd_mb_index].record()
-            # torch.cuda.synchronize()
-            # end_bwd = time.time()
-
             # Get the bwd send ops, but don't fire, to be fused with the 1F below
             bwd_sends = self._stage.get_bwd_send_ops(bwd_mb_index)
             bwd_mb_index += 1
@@ -802,26 +755,15 @@ class Schedule1F1B(PipelineScheduleSingle):
             # Fuse it with bwd_sends above
             if fuse_work := _batch_p2p(bwd_sends + fwd_recvs, desc="bwd_send_fwd_recv"):
                 fuse_work.wait()
-            # print(f"[Rank {torch.distributed.get_rank()}] sent grad {bwd_mb_index}")
-            # time_dict["bwd"].append([start_bwd, end_bwd])
-            # fwd_start[fwd_mb_index].record()
-            # Now do the fwd
-            # torch.cuda.synchronize()
-            # start_fwd = time.time()
             output = self._stage.forward_one_chunk(fwd_mb_index, arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
             # Compute loss
             self._maybe_compute_loss(self._stage, output, target_mbs, fwd_mb_index)
-            # fwd_end[fwd_mb_index].record()
-            # torch.cuda.synchronize()
-            # end_fwd = time.time()
-            # time_dict["fwd"].append([start_fwd, end_fwd])
             # Get the fwd send ops, but don't fire, leave it for the next iter (wrap-around)
             fwd_sends = self._stage.get_fwd_send_ops(fwd_mb_index)
             fwd_mb_index += 1
 
         # Remember we still have some bwd_sends left over after the break? Now it is time to fire it
         send_work = _batch_p2p(bwd_sends, desc="bwd_send")
-        # print(f"[Rank {self._stage.device.index}] 1B1F phase end across all microbatches")
         # Cooldown
         while bwd_mb_index < self._n_microbatches:
             # prepare bwd recv ops
@@ -830,20 +772,12 @@ class Schedule1F1B(PipelineScheduleSingle):
                 recv_work.wait()
 
             # Backward one chunk
-            # bwd_start[bwd_mb_index].record()
-            # torch.cuda.synchronize()
-            # start_bwd = time.time()
             loss = self._maybe_get_loss(self._stage, bwd_mb_index)
             self._stage.backward_one_chunk(
                 bwd_mb_index,
                 loss=loss,
                 last_backward=bwd_mb_index == self._n_microbatches - 1,
             )
-            # bwd_end[bwd_mb_index].record()
-            # torch.cuda.synchronize()
-            # end_bwd = time.time()
-            # time_dict["bwd"].append([start_bwd, end_bwd])
-
             # Clear previous chunk's backward sends (hopefully they have well finished)
             if send_work:
                 send_work.wait()
@@ -852,17 +786,8 @@ class Schedule1F1B(PipelineScheduleSingle):
             bwd_sends = self._stage.get_bwd_send_ops(bwd_mb_index)
             send_work = _batch_p2p(bwd_sends, desc="bwd_send")
             bwd_mb_index += 1
-        # print(f"[Rank {self._stage.device.index}] Cooldown phase end across all microbatches")
         # Wait for the last backward send to finish
         if send_work:
             send_work.wait()
-        # torch.cuda.synchronize()
-        # for i in range(self._n_microbatches):
-        #     fwd_time = fwd_start[i].elapsed_time(fwd_end[i])
-        #     bwd_time = bwd_start[i].elapsed_time(bwd_end[i])
-        #     if time_dict is not None:
-        #         time_dict["fwd"].append(fwd_time)
-        #         time_dict["bwd"].append(bwd_time)
         # Return losses if there is a container passed in
-        # print(f"[Rank {self._stage.device.index}] : fwd time : {fwd_time}, bwd time: {bwd_time}")
         self._update_losses(self._stage, losses)

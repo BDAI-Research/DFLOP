@@ -22,7 +22,6 @@ import transformers
 import tokenizers
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
-# LLaVA 관련 모듈
 from llava.constants import (
     IGNORE_INDEX,
     DEFAULT_IMAGE_TOKEN,
@@ -40,8 +39,7 @@ from llava.model.multimodal_encoder.siglip_encoder import (
 )
 from llava.model.multimodal_projector.builder import build_vision_projector
 from llava.train.train import preprocess
-# torchtune 관련 모듈
-from torchtune_models import flashqwen2
+from .torchtune_models import flashqwen2
 from torchtune.modules import TransformerDecoder
 from torchtune.modules.attention_utils import _MaskType
 from torchtune.modules.loss import LinearCrossEntropyLoss
@@ -49,7 +47,7 @@ from torchtune.modules.loss import LinearCrossEntropyLoss
 
 
 class TrainConfig():
-    def __init__(self, image_folder, video_folder, image_processor, image_size, patch_size, tokenizer_model_max_length, image_aspect_ratio="anyres_max_9", image_grid_pinpoints="(1x1),...,(6x6)", is_intenvl=False):
+    def __init__(self, image_folder, video_folder, image_processor, image_size, patch_size, tokenizer_model_max_length, image_aspect_ratio="anyres_max_9", image_grid_pinpoints="(1x1),...,(6x6)", is_internvl=False):
         self.image_folder = image_folder
         self.video_folder = video_folder
         self.image_processor = image_processor
@@ -57,7 +55,7 @@ class TrainConfig():
         self.image_size = image_size
         self.patch_size = patch_size
         self.num_patches_per_side = image_size // patch_size
-        if is_intenvl:
+        if is_internvl:
             self.num_patches_per_side = self.num_patches_per_side // 2
         self.frames_upbound = 32
         self.video_fps = 1
@@ -78,7 +76,6 @@ class TrainConfig():
 def preprocess_multimodal(sources: Sequence[str]) -> Dict:
     for source in sources:
         for sentence in source:
-            # TODO maybe this should be changed for interleaved data?
             # if DEFAULT_IMAGE_TOKEN in sentence["value"] and not sentence["value"].startswith(DEFAULT_IMAGE_TOKEN):
             # only check for num_im=1
             num_im = len(re.findall(DEFAULT_IMAGE_TOKEN, sentence["value"]))
@@ -91,8 +88,6 @@ def preprocess_multimodal(sources: Sequence[str]) -> Dict:
             replace_token = DEFAULT_IMAGE_TOKEN
             replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
             sentence["value"] = sentence["value"].replace(DEFAULT_IMAGE_TOKEN, replace_token)
-
-            # For videoInstruct-100k noisy_data. TODO: Ask Yuanhan to clean the data instead of leaving the noise code here.
             sentence["value"] = sentence["value"].replace("QA_GT_caption_based_noisy", "")
 
     return sources
@@ -206,7 +201,6 @@ class LazySupervisedDataset(Dataset):
         image_folder = self.data_args.image_folder
         processor = self.data_args.image_processor
         image_aspect_ratio = self.data_args.image_aspect_ratio
-        # print(f"\n\nInspecting the image path, folder = {image_folder}, image={image_file}\n\n")
         try:
             image = Image.open(os.path.join(image_folder, image_file)).convert("RGB")
         except Exception as exn:
@@ -241,10 +235,8 @@ class LazySupervisedDataset(Dataset):
             image = processor.preprocess(image, return_tensors="pt")["pixel_values"][0]
         else:
             image = processor.preprocess(image, return_tensors="pt")["pixel_values"][0]
-        # print(f"Processed image {image_file} image shape : {image.shape}")
         return image, image_size, "image"
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        # TODO: define number of retries somewhere else
         num_base_retries = 3
         num_final_retries = 300
 
@@ -262,7 +254,6 @@ class LazySupervisedDataset(Dataset):
         for attempt_idx in range(num_base_retries):
             try:
                 next_index = min(i + 1, len(self.list_data_dict) - 1)
-                # sample_idx = random.choice(range(len(self)))
                 sample = self._get_item(next_index)
                 return sample
             except Exception as e:
@@ -307,19 +298,12 @@ class LazySupervisedDataset(Dataset):
                 if "shareVideoGPTV" in video_file:
                     frame_files = [os.path.join(video_file, f) for f in os.listdir(video_file) if os.path.isfile(os.path.join(video_file, f))]
                     frame_files.sort()  # Ensure the frames are sorted if they are named sequentially
-
-                    # TODO: Hard CODE: Determine the indices for uniformly sampling 10 frames
-
                     num_frames_to_sample = 10
-                    avg_fps = 2
-                    
+                    avg_fps = 2                    
                     total_frames = len(frame_files)
                     sampled_indices = np.linspace(0, total_frames - 1, num_frames_to_sample, dtype=int)
-
-
                     frame_time = [i/2 for i in sampled_indices]
                     frame_time = ",".join([f"{i:.2f}s" for i in frame_time])
-
                     video_time = total_frames / avg_fps
 
                     # Read and store the sampled frames
@@ -339,7 +323,6 @@ class LazySupervisedDataset(Dataset):
                 image = processor.preprocess(video, return_tensors="pt")["pixel_values"]                
                 image = [(image, video[0].size, "video")]
                 sources = preprocess_multimodal(copy.deepcopy([e["conversations"] for e in sources]))
-                # print(sources)
             except Exception as e:
                 print(f"Error: {e}")
                 print(f"Failed to read video file: {video_file}")
@@ -391,7 +374,6 @@ class DataCollatorForSupervisedDataset(object):
 
     def get_2dPool(self, image_feature, stride=2):
         height = width = self.num_patches_per_side
-        # print(f"height, width: {height}, {width}, image_feature shape: {image_feature.shape}")
         num_frames, num_tokens, num_dim = image_feature.shape
         image_feature = image_feature.view(num_frames, height, width, -1)
         image_feature = image_feature.permute(0, 3, 1, 2).contiguous()
@@ -423,8 +405,6 @@ class DataCollatorForSupervisedDataset(object):
         return input_ids
     
     def process_image_features(self, encoded_image_features, split_sizes, video_idx_in_batch, image_sizes):
-        # print(f"Image featu")
-        # print(f"encoderd_image_features shape: {encoded_image_features.shape}")
         encoded_image_features = torch.split(encoded_image_features, split_sizes)
         image_features = []
         for idx, image_feat in enumerate(encoded_image_features):
@@ -478,8 +458,6 @@ class DataCollatorForSupervisedDataset(object):
     def process_llm_inputs(self, input_ids, attention_mask, labels, image_features):
         attention_mask = attention_mask.bool()
         position_ids = torch.arange(0, input_ids.shape[1], dtype=torch.long, device=input_ids.device)
-
-        # remove the padding using attention_mask -- FIXME
         input_ids = [cur_input_ids[cur_attention_mask] for cur_input_ids, cur_attention_mask in zip(input_ids, attention_mask)]
         labels = [cur_labels[cur_attention_mask] for cur_labels, cur_attention_mask in zip(labels, attention_mask)]
         new_input_embeds = []
@@ -521,8 +499,6 @@ class DataCollatorForSupervisedDataset(object):
                     cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
 
             cur_new_input_embeds = [x for x in cur_new_input_embeds]
-
-            # import pdb; pdb.set_trace()
             cur_new_input_embeds = torch.cat(cur_new_input_embeds)
             cur_new_labels = torch.cat(cur_new_labels)
 

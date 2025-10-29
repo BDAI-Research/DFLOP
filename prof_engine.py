@@ -1,23 +1,30 @@
-import copy
 import os
-import pickle
-import time
-from pathlib import Path
-from types import SimpleNamespace
-
+import copy
+import argparse
+import torch
 import numpy as np
 import pandas as pd
-import torch
+import time
+import pickle
 import transformers
 from tqdm import tqdm
+from torch import nn
+from torch.nn.parallel import DistributedDataParallel
+from torch.distributed._tensor.device_mesh import init_device_mesh
+from torch.distributed.tensor.parallel import (
+    parallelize_module,
+    loss_parallel
+)
 from torch.utils.data import DataLoader, RandomSampler
-from utils.data import (
+from torchtune.modules.loss import LinearCrossEntropyLoss
+from torchtune.utils import batch_to_device
+from dflop.data import (
     DataCollatorForSupervisedDataset,
     LazySupervisedDataset,
     SigLipImageProcessor,
     TrainConfig,
 )
-from utils.model import (
+from dflop.model import (
     InternVLInternVitModule,
     LLaVAOVInternVitModule,
     LLaVAOVMMConfig,
@@ -25,33 +32,17 @@ from utils.model import (
     llm_configs,
     vision_configs,
 )
-from torch import nn
-from torch.distributed._tensor.device_mesh import init_device_mesh
-from torch.distributed.tensor.parallel import (
-    parallelize_module,
-    loss_parallel
-)
-from torchtune.modules.loss import LinearCrossEntropyLoss
-from torchtune.utils import batch_to_device
-from torchtune_models import flashqwen2, flashllama3
-from utils.parallel import (
+from dflop.parallel import (
     apply_ac,
-    init_distributed,
     internvl_internvit_tp_plan,
     llava_ov_siglip_tp_plan,
     llavaov_internvit_tp_plan,
     llm_tp_plan,
     prepare_mha_for_tp,
 )
-from utils.profile import flush_cache, torchtune_loader
-from utils.profiler import AllocatedMemContext
-from torch.nn.parallel import DistributedDataParallel
-from utils.config import (
-    get_config_path,
-    load_config,
-    resolve_path as resolve_config_path,
-    reset_config_cache,
-)
+from dflop.torchtune_models import flashqwen2, flashllama3
+from dflop.prof_utils import flush_cache, torchtune_loader
+from dflop.config import load_config, resolve_path
 
 class VisionModule(nn.Module):
     def __init__(self, module):
@@ -81,7 +72,6 @@ def init_model(model, model_dtype, tp_plan, local_rank, profile_mode, is_vision)
     model = model.to(model_dtype)
     model = model.to(local_rank)
     if _world_size > 1:
-        # model = parallelize_model(model, _world_size)
         model = prepare_mha_for_tp(model, tp_mesh)
         parallelize_module(
             model,
@@ -111,7 +101,6 @@ def profile_model_mem(model_dtype, model, loss_fn, d_tensor_optimizer, local_ten
         torch.cuda.reset_peak_memory_stats()
         # Forward calculation
         before_fwd_peak_mem = torch.cuda.max_memory_allocated()
-        # before_fwd_cur_mem = torch.cuda.memory_allocated()
         if model_dtype == torch.float32:
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
                 if isinstance(batch, dict):
@@ -280,16 +269,6 @@ def profile_vision(image_size, vision_module, model_dtype, tp_plan, profile_mode
         alpha: Scaling factor for memory usage (in terms of batch size, sequence length, and number of layers)
         constant_val: Constant value for memory usage (constant value calculated when model type is float32)
     '''
-    # device = torch.cuda.current_device()
-    # mm_config = LLaVAOVMMConfig("mlp2x_gelu", vision_config.hidden_size, llm_config["embed_dim"])
-    # if model_name == "siglip":
-    #     vision_module = LLaVAOVSigLipModule(vision_config, mm_config, model_dtype, device)
-    #     image_size = 384
-    # elif model_name == "internvit":
-    #     vision_module = LLaVAOVInternVitModule(vision_config, mm_config, model_dtype, device).to(model_dtype)
-    #     image_size = 448
-    # else:
-    #     raise ValueError(f"Unsupported model name: {model_name}")
     local_rank = int(os.environ["LOCAL_RANK"])
     model = VisionModule(vision_module)
     model = init_model(model, model_dtype, tp_plan, local_rank, profile_mode, is_vision=True)
@@ -386,15 +365,17 @@ def profile_llm(llm_module, model_dtype, tp_plan, vocab_size, profile_mode, l2_c
         raise ValueError(f"Unsupported profile mode: {profile_mode}")
     return result_dict
 
-def model_profiler(args, global_rank, result_path: Path, model_dtype, profile_mode, skip_attn, l2_cache_size):
+def model_profiler(args, global_rank, result_path, model_dtype, profile_mode, skip_attn, l2_cache_size):
+    tp_size = int(os.environ.get("WORLD_SIZE", 1))
     if args.vision_model_name:
-        df_path = result_path / f"{profile_mode}_{args.mllm_model_name}_{args.vision_model_name}_{args.vision_model_size}.csv"
-        llm_config = llm_configs["qwen2.5"]["7b"] # arbitrary llm config for vision model profiling
+        df_path = os.path.join(result_path, f"{profile_mode}_{args.mllm_model_name}_{args.vision_model_name}_{args.vision_model_size}.csv")
+        llm_config = llm_configs["qwen2.5"]["7b"] # arcbitrary llm config for vision model profiling
         vision_config = vision_configs[args.vision_model_name][args.vision_model_size]
         vision_config.num_hidden_layers = args.num_hidden_layers
+        if vision_config.num_attention_heads % tp_size != 0:
+            return
         vision_tp_plans = {"llavaov": {"siglip": llava_ov_siglip_tp_plan, "internvit": llavaov_internvit_tp_plan},
                         "internvl": {"internvit": internvl_internvit_tp_plan}
-                        #    "qwenvl":{"qwenvit": qwenvl_tp_plan}
                         }
         vision_tp_plan = vision_tp_plans[args.mllm_model_name][args.vision_model_name]
         llavaov_mm_config = LLaVAOVMMConfig("mlp2x_gelu", vision_config.hidden_size, llm_config["embed_dim"])
@@ -407,26 +388,22 @@ def model_profiler(args, global_rank, result_path: Path, model_dtype, profile_mo
             vision_module = InternVLInternVitModule(vision_config, llm_config, model_dtype, torch.cuda.current_device()).to(torch.cuda.current_device())
         else:
             pass
-        # vision_modules = {"llavaov" : {"siglip": LLaVAOVSigLipModule(vision_config, llavaov_mm_config, model_dtype, torch.cuda.current_device()),
-        #                                "internvit": LLaVAOVInternVitModule(vision_config, llavaov_mm_config, model_dtype, torch.cuda.current_device())},
-        #                   "internvl" : {"internvit": InternVLInternVitModule(vision_config, llm_config, model_dtype, torch.cuda.current_device())}
-        #                  # "qwenvl" : {"qwenvit": QWENVLQWENVitModule(vision_config, qwenvl_mm_config, torch.cuda.current_device()).to(model_dtype)}
-        #                  }
-        # vision_module = vision_modules[args.mllm_model_name][args.vision_model_name].to(model_dtype)
         if args.vision_model_name == "siglip":
             image_size = 384
         elif args.vision_model_name == "internvit":
             image_size = 448
-        elif args.vision_model_name == "qwenvit":
-            pass
+        else:
+            raise ValueError(f"Unknown vision model name: {args.vision_model_name}")
         profile_result = profile_vision(image_size, vision_module, model_dtype, vision_tp_plan, profile_mode, l2_cache_size)
     else:
         if skip_attn:
-            df_path = result_path / f"{profile_mode}_{args.mllm_model_name}_{args.llm_model_name}_{args.llm_model_size}_skip_attn.csv"
+            df_path = os.path.join(result_path, f"{profile_mode}_{args.mllm_model_name}_{args.llm_model_name}_{args.llm_model_size}_skip_attn.csv")
         else:
-            df_path = result_path / f"{profile_mode}_{args.mllm_model_name}_{args.llm_model_name}_{args.llm_model_size}.csv"
+            df_path = os.path.join(result_path, f"{profile_mode}_{args.mllm_model_name}_{args.llm_model_name}_{args.llm_model_size}.csv")    
         
         llm_config = llm_configs[args.llm_model_name][args.llm_model_size]
+        if llm_config['num_heads'] % tp_size != 0:
+            return
         llm_models = {"qwen2.5": flashqwen2, "llama3": flashllama3}
         vocab_sizes = {"qwen2.5": 152064, "llama3": 128256}
         vocab_size = vocab_sizes[args.llm_model_name]
@@ -451,99 +428,36 @@ def model_profiler(args, global_rank, result_path: Path, model_dtype, profile_mo
     result_df["num_layers"] = args.num_hidden_layers
     result_df["tp_size"] = int(os.environ.get("WORLD_SIZE", 1))
     if global_rank == 0:
-        if df_path.exists():
+        if os.path.exists(df_path):
             prev_df = pd.read_csv(df_path)
             result_df = pd.concat([prev_df, result_df], ignore_index=True)
-        df_path.parent.mkdir(parents=True, exist_ok=True)
         result_df.to_csv(df_path, index=False)
 
 if __name__ == "__main__":
-    default_config_path = get_config_path()
-    os.environ.setdefault("DFLOP_CONFIG", str(default_config_path))
-    reset_config_cache()
-    config = load_config()
+    parser = argparse.ArgumentParser(description="Profile model memory usage")
+    parser.add_argument("--mllm_model_name", type=str, required=True, help="Name of MLLM model")
+    parser.add_argument("--vision_model_name", type=str, help="Name of vision model")
+    parser.add_argument("--vision_model_size", type=str, help="Size of vision model")
+    parser.add_argument("--llm_model_name", type=str, help="Name of LLM model")
+    parser.add_argument("--llm_model_size", type=str, help="Size of LLM model")
+    parser.add_argument("--num_hidden_layers", type=int, help="Number of hidden layers in the model")
+    parser.add_argument("--profile_mode", type=str, choices=["data", "mem", "thr"], help="Profile mode")
+    parser.add_argument("--device_type", type=str,  default="a100", help="Type of GPUs (e.g. a100, 6000ada, a6000)")
+    parser.add_argument("--skip_attn", action="store_true", help="Skip attention layers")
+    args = parser.parse_args()
 
-    profiling_cfg = config.get("profiling", {})
+    config = load_config()
     models_cfg = config.get("models", {})
+    paths_cfg = config.get("paths", {})
+
     vision_cfg = models_cfg.get("vision", {})
     llm_cfg = models_cfg.get("llm", {})
-    paths_cfg = config.get("paths", {})
-    model_paths_cfg = config.get("model_paths", {})
-
-    mllm_model_name = models_cfg.get("mllm")
-    vision_model_name = vision_cfg.get("name")
-    vision_model_size = vision_cfg.get("size")
-    llm_model_name = llm_cfg.get("name")
-    llm_model_size = llm_cfg.get("size")
-
-    profile_mode = os.environ.get("PROFILE_MODE")
-    if profile_mode is None:
-        raise ValueError("PROFILE_MODE environment variable must be set (expected 'data', 'mem', or 'thr').")
-    if profile_mode not in {"data", "mem", "thr"}:
-        raise ValueError(f"Unsupported profile mode: {profile_mode}")
-
-    num_hidden_layers_env = os.environ.get("NUM_HIDDEN_LAYERS")
-    num_hidden_layers = int(num_hidden_layers_env) if num_hidden_layers_env is not None else None
-    if profile_mode in {"mem", "thr"} and num_hidden_layers is None:
-        raise ValueError("NUM_HIDDEN_LAYERS environment variable must be set for mem/thr profiling runs.")
-
-    skip_attn = os.environ.get("SKIP_ATTN", "").lower() in {"1", "true", "yes"}
-    device_type = os.environ.get("DEVICE_TYPE", "a100")
-
-    settings = SimpleNamespace(
-        mllm_model_name=mllm_model_name,
-        vision_model_name=vision_model_name,
-        vision_model_size=vision_model_size,
-        llm_model_name=llm_model_name,
-        llm_model_size=llm_model_size,
-        model_dtype=profiling_cfg.get("model_dtype", "bfloat16"),
-        num_hidden_layers=num_hidden_layers,
-        profile_mode=profile_mode,
-        device_type=device_type,
-        skip_attn=skip_attn,
-    )
-
-    required_fields = [
-        "mllm_model_name",
-        "vision_model_name",
-        "vision_model_size",
-        "llm_model_name",
-        "llm_model_size",
-    ]
-    missing = [field for field in required_fields if getattr(settings, field) is None]
-    if missing:
-        raise ValueError(f"Missing profiling configuration values: {', '.join(missing)}")
-
-    args = settings
-
-    result_path = resolve_config_path(paths_cfg.get("profile_result_dir"))
-    if result_path is None:
-        raise ValueError("paths.profile_result_dir must be provided in the configuration.")
-    dataset_path = resolve_config_path(paths_cfg.get("dataset_yaml"))
-    image_folder = resolve_config_path(paths_cfg.get("image_folder"))
-    video_folder = resolve_config_path(paths_cfg.get("video_folder"))
-
-    for name, path in (
-        ("paths.dataset_yaml", dataset_path),
-        ("paths.image_folder", image_folder),
-        ("paths.video_folder", video_folder),
-    ):
-        if path is None:
-            raise ValueError(f"{name} must be provided in the configuration.")
-
-    result_path.mkdir(parents=True, exist_ok=True)
-
-    model_dtype = getattr(torch, args.model_dtype)
-
-    model_path = resolve_config_path(model_paths_cfg.get(args.llm_model_name))
-    if model_path is None:
-        raise ValueError(f"Missing model path for '{args.llm_model_name}' in model_paths configuration.")
-
-    dataset_path_str = str(dataset_path)
-    image_folder_str = str(image_folder)
-    video_folder_str = str(video_folder)
-    model_path_str = str(model_path)
-
+    model_path_cfg = paths_cfg.get("model_dir", {})
+    result_dir = paths_cfg.get("result_dir")
+    model_path = str(resolve_path(model_path_cfg.get(args.llm_model_name)))
+    result_path = str(resolve_path(result_dir))
+    model_dtype = getattr(torch, models_cfg.get("model_dtype", "bfloat16"))
+    
     if args.profile_mode == "data":
         # Data distribution analysis setup
         np.random.seed(42)
@@ -551,35 +465,36 @@ if __name__ == "__main__":
         seed = int(seed_list[0])
         generator = torch.Generator()
         generator.manual_seed(seed)
-        if args.mllm_model_name == "qwenvl":
-            pass
-        else:
-            tokenizer = transformers.AutoTokenizer.from_pretrained(model_path_str, padding_side="right")
-            tokenizer_model_max_length = tokenizer.model_max_length
-            if args.vision_model_name == "siglip":
-                image_size = 384
-                patch_size = 14
-                image_processor = SigLipImageProcessor()
-            elif args.vision_model_name == "internvit":
-                image_size = 448
-                patch_size = 14
-                image_processor = SigLipImageProcessor(size=(image_size, image_size), crop_size={"height": image_size, "width": image_size})
-            train_config = TrainConfig(image_folder=image_folder_str,
-                            video_folder=video_folder_str,
-                            image_processor=image_processor,
-                            tokenizer_model_max_length=tokenizer_model_max_length,
-                            image_size=image_size,
-                            patch_size=patch_size,
-                            is_internvl=True if args.mllm_model_name=="internvl" else False
-                        )
-            llm_config = llm_configs[args.llm_model_name][args.llm_model_size]  # arbitrary llm config for data analysis
-            dataset = LazySupervisedDataset(dataset_path_str, tokenizer, train_config)
-            data_collator = DataCollatorForSupervisedDataset(train_config, llm_config, tokenizer, model_dtype)
+        dataset_path = str(resolve_path(paths_cfg.get("dataset_yaml")))
+        image_folder = str(resolve_path(paths_cfg.get("image_folder")))
+        video_folder = str(resolve_path(paths_cfg.get("video_folder")))
+        tokenizer = transformers.AutoTokenizer.from_pretrained(model_path, padding_side="right")
+        tokenizer_model_max_length = tokenizer.model_max_length
+        if args.vision_model_name == "siglip":
+            image_size = 384
+            patch_size = 14
+            image_processor = SigLipImageProcessor()
+        elif args.vision_model_name == "internvit":
+            image_size = 448
+            patch_size = 14
+            image_processor = SigLipImageProcessor(size=(image_size, image_size), crop_size={"height": image_size, "width": image_size})
+        train_config = TrainConfig(image_folder=image_folder,
+                        video_folder=video_folder,
+                        image_processor=image_processor,
+                        tokenizer_model_max_length=tokenizer_model_max_length,
+                        image_size=image_size,
+                        patch_size=patch_size,
+                        is_internvl=True if args.mllm_model_name=="internvl" else False
+                    )
+        llm_model_size = llm_cfg.get("size")
+        llm_config = llm_configs[args.llm_model_name][llm_model_size]
+        dataset = LazySupervisedDataset(dataset_path, tokenizer, train_config)
+        data_collator = DataCollatorForSupervisedDataset(train_config, llm_config, tokenizer, model_dtype)
         sampler = RandomSampler(dataset, generator=generator)
         dataloader = DataLoader(dataset, batch_size=1, sampler=sampler, collate_fn=data_collator, shuffle=False, num_workers=32)
         image_batch_list, llm_input_seq_list = run_data_analysis(dataloader)
         data_analysis_result = {"image_batch": image_batch_list, "llm_input_seq": llm_input_seq_list}
-        with open(result_path / f"{args.mllm_model_name}_{args.vision_model_name}_{args.llm_model_name}_video.pkl", "wb") as f:
+        with open(f"{result_path}/{args.mllm_model_name}_{args.vision_model_name}_{args.llm_model_name}.pkl", "wb") as f:
             pickle.dump(data_analysis_result, f)
     else:
         global_rank = int(os.environ["RANK"])
@@ -594,4 +509,4 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unknown device_type: {args.device_type}")
         model_profiler(args, global_rank, result_path, model_dtype, args.profile_mode, args.skip_attn, l2_cache_size)
-    # os._exit(1)
+    

@@ -164,8 +164,6 @@ class _PipelineStageBase(ABC):
         self.device = device
         self.is_vision = is_vision
         self.is_llm = is_llm
-        # self.vision_group = vision_group
-        # self.llm_group = llm_group
         self.vision_group_ranks = v_pp_last_group_ranks
         self.llm_first_group_ranks = llm_first_group_ranks
         self.vision_tp_first_group_ranks = v_tp_first_group_ranks
@@ -176,19 +174,7 @@ class _PipelineStageBase(ABC):
         self.l_tp_size = l_tp_size
         self.group = group
         self.vision_connect_rank = v_pp_last_group_ranks[0]
-        self.time_dict = {"fwd": [], "bwd": []}
-
         print(f"vision_tp_first_group_ranks : {v_tp_first_group_ranks}, llm_tp_first_group_ranks : {l_tp_first_group_ranks}")
-        # if is_vision:
-        #     self.group = vision_group
-        # elif is_llm:
-        #     self.group = llm_group
-        # else:
-        #     raise ValueError(
-        #         "PipelineStage must be either vision or llm stage, "
-        #         "but got neither."
-        #     )
-
         self.dw_builder = dw_builder
 
         # backward state
@@ -379,7 +365,6 @@ class _PipelineStageBase(ABC):
         for info in recv_infos:
             if not (isinstance(info, _RecvInfo) or (isinstance(info, list) and all(isinstance(i, _RecvInfo) for i in info))):
                 continue
-            # print(f"{self.log_prefix} Receiving tensor from Stage {info.source}: {info.buffer.size()}")
             if is_fwd: # Forward : (LLM first ranks get activation from vision_connect_rank, rest of ranks get from neighbor ranks)
                 info.buffer = info.buffer.to(self.device).detach().requires_grad_(True)
                 if self.is_llm and self.is_first:
@@ -397,7 +382,6 @@ class _PipelineStageBase(ABC):
                     ops.append(
                         dist.P2POp(dist.irecv, info.buffer, peer_global_rank, None)
                     )
-                # print(f"Forward, Rank {torch.distributed.get_rank()} Processing recv info: {info.buffer.shape} from rank {peer_global_rank}")
             else: # Backward : (Vision connect rank get activation from LLM first ranks, rest of ranks get from neighbor ranks)
                 if self.is_vision_connect_rank:
                     for inf in info:
@@ -415,13 +399,9 @@ class _PipelineStageBase(ABC):
                         if self.group is None
                         else dist.get_global_rank(self.group, peer_rank)
                     )  # TODO
-                    # print(f"Rank {torch.distributed.get_rank()} Processing recv info: {info.buffer.shape} from rank {peer_global_rank}")
                     ops.append(
                         dist.P2POp(dist.irecv, info.buffer, peer_global_rank, None)
                     )
-                # print(f"Backward, Rank {torch.distributed.get_rank()} Processing recv info: {info.buffer.shape} from rank {peer_global_rank}")
-                # print(f"Backward, Rank {torch.distributed.get_rank()} ops : {ops}")
-
         return ops
 
     """[Note: V-schedule special case]
@@ -526,8 +506,6 @@ class _PipelineStageBase(ABC):
         """
         Get the activation send ops for current stage's forward.
         """
-        # before_send_peak = torch.cuda.max_memory_allocated(self.device)
-        # before_send_cur = torch.cuda.memory_allocated(self.device)
         before_send = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         output = self.fwd_cache[fwd_chunk_id][0]
         attach_output = []
@@ -552,20 +530,16 @@ class _PipelineStageBase(ABC):
             output_num_list = [base + (1 if i < rem else 0) for i in range(vision_group_size)]
             for out in output_tuple:
                 output_cat_list = [torch.empty((output_num,) + out.shape[1:], dtype=out.dtype, device=out.device) for output_num in output_num_list]
-                # out_cat = torch.empty((vision_group_size,) + out.shape, dtype=out.dtype, device=out.device)
-                # dist.all_gather_into_tensor(out_cat, out, group=self.vision_last_group)
                 dist.all_gather(output_cat_list, out, group=self.vision_tp_first_group)
                 if not self.is_vision_connect_rank:
                     output_tuple = tuple(output_list)
                     continue
                 split_size = self.split_sizes[fwd_chunk_id]
-                # out_cat = out_cat.reshape(-1, *out_cat.shape[2:])
                 out_cat = torch.concat(output_cat_list, dim=0)
                 output = torch.split(out_cat, split_size, dim=0)
                 # Need to divide this into chunks according to LLM DP group predefined by data scheduler
                 output_list.append(output)
             output_tuple = tuple(output_list)
-        # print(f"[Rank : {torch.distributed.get_rank()}, chunk_id : {fwd_chunk_id}] Output tuple shape: {[out.shape for out in output_tuple]}")
         ops: List[dist.P2POp] = []
 
         for idx, out in enumerate(output_tuple):
@@ -605,30 +579,14 @@ class _PipelineStageBase(ABC):
                         out.size(),
                     )
                     ops.append(dist.P2POp(dist.isend, out, peer_global_rank, None))
-                # ops.append(dist.P2POp(dist.isend, out, peer_global_rank, self.group)) # Maybe we should set group to None here?
-        # after_send = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}, Forward Sends {fwd_chunk_id}] Before Peak: {before_send:.2f} GB | After Peak: {after_send:.2f} GB")
-        # after_send_peak = torch.cuda.max_memory_allocated(self.device)
-        # after_send_cur = torch.cuda.memory_allocated(self.device)
-        # peak = (after_send_peak - before_send_peak) / 1024**3
-        # cur = (after_send_cur - before_send_cur) / 1024**3
-        # if torch.distributed.get_rank() == 0:
-            # print(f"[Rank {torch.distributed.get_rank()}, Forward Sends {fwd_chunk_id}] Peak memory usage: {peak:.2f} GB, Current memory usage: {cur:.2f} GB")
-            # print(f"[Rank {torch.distributed.get_rank()}, Forward Send {fwd_chunk_id}] Before Peak: {before_send_peak/ 1024**3:.2f} GB | After Peak: {after_send_peak/ 1024**3:.2f} GB, Before Current: {before_send_cur/ 1024**3:.2f} GB | After Current: {after_send_cur/ 1024**3:.2f} GB")
-            # print(torch.cuda.memory_summary())
         return ops
 
     def get_bwd_send_ops(self, bwd_chunk_id: int) -> List[dist.P2POp]:
         """
         Get the gradient send ops for current stage's backward.
         """
-        # self._check_chunk_id(bwd_chunk_id)
-        # before_send = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         if not self.has_backward or (self.is_first and self.is_vision):
             return []
-
-        # print(f"[Rank : {torch.distributed.get_rank()}] Getting bwd send ops for chunk {bwd_chunk_id} with grad send info: {self.grad_send_info}, self.args_recv_info[0] : {self.args_recv_info[0]}")
         ops: List[dist.P2POp] = []
         grads_input = self.bwd_cache.pop(bwd_chunk_id)
         for grad, grad_recv_stage in zip(grads_input, self.grad_send_info):
@@ -652,7 +610,6 @@ class _PipelineStageBase(ABC):
                         if self.group is None
                         else dist.get_global_rank(self.group, peer_rank)
                     )  # TODO
-                    # print(f"[Rank : {torch.distributed.get_rank()}] Sending grad to peer_global_rank {peer_global_rank}: {grad.size()}")
                     ops.append(dist.P2POp(dist.isend, grad, peer_global_rank, None))
             else:
                 if not (grad is None and grad_recv_stage is None):
@@ -660,9 +617,6 @@ class _PipelineStageBase(ABC):
                         f"[{self.stage_index}] for chunk {bwd_chunk_id} has gradients {grad} "
                         f"and is expecting to send gradients to stage {grad_recv_stage}"
                     )
-        # after_send = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}, Backward Sends {bwd_chunk_id}] Before Peak: {before_send:.2f} GB | After Peak: {after_send:.2f} GB")
         return ops
 
     def clear_runtime_states(self) -> None:
@@ -680,8 +634,6 @@ class _PipelineStageBase(ABC):
 
         self.grad_recv_info.clear()
         self.grad_send_info = None
-        self.time_dict["fwd"].clear()
-        self.time_dict["bwd"].clear()
 
     def _map_tensor_from_recv_info(
         self,
@@ -701,7 +653,6 @@ class _PipelineStageBase(ABC):
             recv_infos,  # type: ignore[arg-type]
             get_recv_tensor,
         )
-        # print(f"[Rank : {torch.distributed.get_rank()}], recv_infos buffer {recv_infos.buffer.shape} got tensors : {tensors.shape}")
         return tensors
 
     def _retrieve_recv_activations(self, fwd_chunk_id: int):
@@ -710,7 +661,6 @@ class _PipelineStageBase(ABC):
         """
         recv_infos = self.args_recv_info.pop(fwd_chunk_id)
         activations = self._map_tensor_from_recv_info(recv_infos)
-        # print(f"[Rank : {torch.distributed.get_rank()}] Retrieving recv activations for chunk {fwd_chunk_id} with recv infos: {recv_infos}, activations : {activations}")
         return activations
 
     def _retrieve_recv_grads(
@@ -721,7 +671,6 @@ class _PipelineStageBase(ABC):
         Retrieve the gradients received for the current stage during backward.
         """
         recv_infos = self.grad_recv_info.pop(bwd_chunk_id)
-        # print(f"[Rank : {torch.distributed.get_rank()}] Retrieving recv grads for chunk {bwd_chunk_id} with recv infos: {recv_infos}")
         grads = self._map_tensor_from_recv_info(recv_infos)
         return grads
 
@@ -736,7 +685,7 @@ class _PipelineStageBase(ABC):
         return out_val
 
     def backward_maybe_with_nosync(
-        self, backward_type, bwd_kwargs: Dict, last_backward=False, time_dict=None
+        self, backward_type, bwd_kwargs: Dict, last_backward=False,
     ) -> Tuple[Tuple[Optional[torch.Tensor], ...], Optional[List[Dict[str, Any]]]]:
         """
         Whether using PP with FSDP or DDP, there are some runtime differences between the last backward step and the
@@ -757,7 +706,6 @@ class _PipelineStageBase(ABC):
                         bwd_kwargs["stage_output"],
                         bwd_kwargs["output_grads"],
                         bwd_kwargs["input_values"],
-                        time_dict=time_dict,
                     ),
                     None,
                 )
@@ -833,9 +781,6 @@ class _PipelineStageBase(ABC):
           through activation transmission.
         - `kwargs` can be passed to all stages via respective `step` calls.
         """
-        # before_fwd_peak = torch.cuda.max_memory_allocated(self.device)
-        # before_fwd_cur = torch.cuda.memory_allocated(self.device)
-        # before_fwd = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         if self.is_first and self.is_vision:
             # First stage doesn't need to receive anything
             composite_args = args
@@ -843,7 +788,6 @@ class _PipelineStageBase(ABC):
             # Receive activations for this chunk
             # Activations only come in args form
             composite_args = self._retrieve_recv_activations(fwd_chunk_id)
-        # print(f"[Rank : {torch.distributed.get_rank()}] Stage {self.stage_index} forward_one_chunk {fwd_chunk_id} with args: {composite_args}, kwargs: {kwargs}")
         if self.is_vision and self.is_last:
             split_sizes = kwargs.pop("split_sizes")
             self.split_sizes.append(split_sizes)
@@ -855,20 +799,11 @@ class _PipelineStageBase(ABC):
                 data_idx = kwargs.pop("data_idx")
                 self.data_stage_idx.append(data_idx)
         composite_kwargs = kwargs or {}
-        # print(f"Stage {self.stage_index} forward_one_chunk {fwd_chunk_id} with args: {composite_args}, kwargs: {composite_kwargs}")
-        # print(f"{self.log_prefix} Forwarding chunk {fwd_chunk_id}")
         # Compute forward
         torch.cuda.synchronize()
         start_fwd = time.time()
         try:
-            # torch.cuda.synchronize(self.device)
-            # start_time = time.time()
             output = self.forward_maybe_with_nosync(*composite_args, **composite_kwargs)
-            # print(f"{self.log_prefix} Forwarding chunk {fwd_chunk_id} Input: {composite_args[0].shape}, Output: {output[0].shape if isinstance(output, tuple) else output.shape}")
-            # torch.cuda.synchronize(self.device)
-            # end_time = time.time()
-            # print(f"{self.log_prefix} forward chunk {fwd_chunk_id} took {end_time - start_time:.4f} seconds")
-            # print(f"[Rank : {torch.distributed.get_rank()}] forward_one_chunk {fwd_chunk_id} output : {output}")
         except Exception as e:
             exc_msg = f"""
             {self.log_prefix} failed to run forward:
@@ -878,7 +813,6 @@ class _PipelineStageBase(ABC):
             raise RuntimeError(exc_msg) from e
         torch.cuda.synchronize()
         end_fwd = time.time()
-        self.time_dict["fwd"].append([start_fwd, end_fwd])
         # See [Note: pipeline model output type]
         output_tuple = _normalize_model_output_as_tuple(output)
 
@@ -897,19 +831,6 @@ class _PipelineStageBase(ABC):
             fwd_chunk_id,
             map_debug_info(output),
         )
-        # after_fwd = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}, Forward Compute {fwd_chunk_id}] Before Active Peak: {before_fwd:.2f} GB | After Active Peak: {after_fwd:.2f} GB")
-        # We return the original user-provied output, not normalized to tuple.
-        # See [Note: pipeline model output type]
-        # after_fwd_peak = torch.cuda.max_memory_allocated(self.device)
-        # after_fwd_cur = torch.cuda.memory_allocated(self.device)
-        # peak = (after_fwd_peak - before_fwd_peak) / 1024**3
-        # cur = (after_fwd_cur - before_fwd_cur) / 1024**3
-        # if torch.distributed.get_rank() == 0:
-        #     print(f"[Rank {torch.distributed.get_rank()}, Forward Compute {fwd_chunk_id}] Before Peak: {before_fwd_peak/ 1024**3:.2f} GB | After Peak: {after_fwd_peak/ 1024**3:.2f} GB, Before Current: {before_fwd_cur/ 1024**3:.2f} GB | After Current: {after_fwd_cur/ 1024**3:.2f} GB")
-            # print(torch.cuda.memory_summary())
-            # print(f"[Rank {torch.distributed.get_rank()}, Forward Step {fwd_chunk_id}] Peak memory usage: {peak:.2f} GB, Current memory usage: {cur:.2f} GB")
         return output
 
     def backward_one_chunk(
@@ -932,9 +853,6 @@ class _PipelineStageBase(ABC):
         last_backward is controlled by the schedule and signals synchronization of gradients across DP groups
         after the last backward.
         """
-        # self._check_chunk_id(bwd_chunk_id)
-        # print(f"{self.log_prefix} Backwarding chunk {bwd_chunk_id}, full_backward={full_backward}, last_backward={last_backward}, fwd_cache={self.fwd_cache.keys()}")
-        # before_bwd = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         (
             stage_output,
             input_values,
@@ -965,50 +883,20 @@ class _PipelineStageBase(ABC):
                     for grad in grad_split_list:
                         for _ in range(v_tp_size):
                             if dst_idx == 0:
-                                recv_grad = grad  # 본인 것은 그냥 사용
+                                recv_grad = grad
                             else:
                                 req = dist.isend(tensor=grad, dst=dist.get_global_rank(self.vision_last_group, dst_idx), group=self.vision_last_group)
                                 futures.append(req)
                             dst_idx += 1
-                    # 병렬 전송 시작됨
                     for req in futures:
-                        req.wait()  # 완료까지 대기
-                    # print(f"[Rank : {torch.distributed.get_rank()}] Receiving grads for chunk {bwd_chunk_id} with grad split list: {[g.shape for g in grad_split_list]}, recv_grad shape : {recv_grad.shape}, concat_grads_output shape {concat_grads_output.shape}")
+                        req.wait()
                 else:
                     vision_last_group = self.vision_last_group
                     sender_rank = self.vision_connect_rank
                     recv_grad = torch.empty_like(stage_output[0])
-                    # print(f"[Rank : {torch.distributed.get_rank()}] Receiving grads for chunk {bwd_chunk_id} recv_grad shape : {recv_grad.shape}")
                     req = dist.irecv(tensor=recv_grad, src=sender_rank, group=vision_last_group)
-                    req.wait()  # 수신 완료까지 대기
-                # if self.is_vision_connect_rank:
-                #     grads_output = self._retrieve_recv_grads(bwd_chunk_id)
-                #     concat_grads_output = torch.concat(grads_output[0], dim=0)
-                #     vision_last_group_size = self.vision_last_group.size()
-                #     num_images = sum(self.split_sizes[bwd_chunk_id])
-                #     base = num_images // vision_last_group_size
-                #     rem = num_images % vision_last_group_size
-                #     grad_num_list = [base + (1 if i < rem else 0) for i in range(vision_last_group_size)]
-                #     grad_split_list = list(torch.split(concat_grads_output, grad_num_list, dim=0))
-                #     recv_grad = torch.empty_like(stage_output[0])
-                #     print(f"[Rank : {torch.distributed.get_rank()}] Receiving grads for chunk {bwd_chunk_id} with grad split list: {[g.shape for g in grad_split_list]}, recv_grad shape : {recv_grad.shape}, concat_grads_output shape {concat_grads_output.shape}")
-                #     dist.scatter(
-                #         tensor=recv_grad,
-                #         scatter_list=grad_split_list,
-                #         src=self.vision_connect_rank,
-                #         group=self.vision_last_group
-                #     )
-                # else:
-                #     recv_grad = torch.empty_like(stage_output[0])
-                #     print(f"[Rank : {torch.distributed.get_rank()}] Receiving grads for chunk {bwd_chunk_id} recv_grad shape : {recv_grad.shape}")
-                #     dist.scatter(
-                #         tensor=recv_grad,
-                #         scatter_list=None,
-                #         src=self.vision_connect_rank,
-                #         group=self.vision_last_group
-                #     )
+                    req.wait()
                 grads_output = (recv_grad,)
-                # print(f"[Rank : {torch.distributed.get_rank()}] Getting bwd recv ops for chunk {bwd_chunk_id} with grads_output: {grads_output[0].shape}")
                 bwd_kwargs = {
                     "stage_output": stage_output,
                     "output_grads": grads_output,
@@ -1027,10 +915,7 @@ class _PipelineStageBase(ABC):
             }
 
         grads_input: Tuple[Optional[torch.Tensor], ...] = ()
-        # print(f"[Rank : {torch.distributed.get_rank()} Bwd_id : {bwd_chunk_id}] recv_grad shape : {bwd_kwargs['output_grads'][0].shape if bwd_kwargs['output_grads'] is not None else None}, stage_output shape : {stage_output[0].shape}, input_values shape : {input_values[0].shape}")
         # Custom backward function
-        # torch.cuda.synchronize()
-        # start_bwd = time.time()
         if self.dw_builder:
             # TODO: We may want to change our semantics so we are allowed to ignore
             # the 'dw_builder' and call full_backward directly when it is a full_backward op.
@@ -1043,15 +928,9 @@ class _PipelineStageBase(ABC):
                 self.dw_runner[bwd_chunk_id] = self.dw_builder()
         else:
             if full_backward:
-                # torch.cuda.synchronize(self.device)
-                # start_bwd = time.time()
-                # print(f"{self.log_prefix} Backward chunk {bwd_chunk_id}, stage output {bwd_kwargs['stage_output']}, grads_output {output_grads if output_grads is not None else None}, input_values {bwd_kwargs['input_values'][0].shape}")
                 grads_input, _ = self.backward_maybe_with_nosync(
-                    "full", bwd_kwargs, last_backward=last_backward, time_dict=self.time_dict
+                    "full", bwd_kwargs, last_backward=last_backward
                 )
-                # torch.cuda.synchronize(self.device)
-                # end_bwd = time.time()
-                # print(f"{self.log_prefix} backward chunk {bwd_chunk_id} took {end_bwd - start_bwd:.4f} seconds")
             else:
                 param_groups: List[Dict[str, Any]] | None = None
                 # Skip the backward for the first stage since we will perform the weight update with
@@ -1086,12 +965,6 @@ class _PipelineStageBase(ABC):
             # this should be detached to release autograd graph context and free memory earlier
             for t in stage_output:
                 t.detach_()
-        # torch.cuda.synchronize()
-        # end_bwd = time.time()
-        # self.time_dict["bwd"].append([start_bwd, end_bwd])
-        # after_bwd = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}, Backward Compute {bwd_chunk_id}] Before Peak: {before_bwd:.2f} GB | After Peak: {after_bwd:.2f} GB")
         logger.debug("%s Backwarded chunk %s", self.log_prefix, bwd_chunk_id)
 
     def backward_weight_one_chunk(self, bwd_chunk_id: int, last_backward=False):
@@ -1301,7 +1174,6 @@ class PipelineStage(_PipelineStageBase):
                 "Shape inference: stage %s skipping recv, because shape info passed in via `args`",
                 self.stage_index,
             )
-            # args = tree_map_only(torch.Tensor, lambda x: x.to("meta"), args)
         else:
             assert (
                 len(args) == 0
@@ -1324,9 +1196,6 @@ class PipelineStage(_PipelineStageBase):
 
         # cache input shapes for use during recv buffer allocation
         self.inputs_meta = args
-        # args = tree_map_only(
-        #     torch.Tensor, lambda x: torch.zeros_like(x, device=self.device), args
-        # )
 
         # set attributes needed for forward
         with torch.no_grad():
@@ -1416,7 +1285,6 @@ class PipelineStage(_PipelineStageBase):
 
                 self.args_recv_info[chunk_id] = recv_infos
             else:
-                # print(f"Prepare forward infra: stage {self.stage_index}, {tuple([_RootArgPlaceholder(i).meta for i in self.inputs_meta])}")
                 self.args_recv_info[chunk_id] = tuple(
                     [_RootArgPlaceholder(i) for i in self.inputs_meta]
                 )

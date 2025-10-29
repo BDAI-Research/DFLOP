@@ -1,20 +1,26 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- Argument check ---
-if [ "$#" -lt 4 ]; then
+if [ "$#" -lt 3 ]; then
     echo "Error: Missing arguments."
-    echo "Usage: $0 <num_nodes> <rank_number> <python_script_path> <master_addr>"
-    echo "Example: $0 5 0 /path/to/train.py xxx.xx.xx.xx"
+    echo "Usage: $0 <num_nodes> <rank_number> <master_addr>"
+    echo "Example: $0 4 0 xxx.xx.xx.xx"
     exit 1
 fi
 
 NNODES="$1"
 RANKNUM="$2"
-PYTHON_FILE="$3"
-MASTER_ADDR="$4"
-PYTHON_ARGS=("${@:5}")
+MASTER_ADDR="$3"
 
-# --- Display configuration ---
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+
+PYTHON_FILE="${SCRIPT_DIR}/../run_profile.py"
+
+command -v torchrun >/dev/null 2>&1 || {
+  echo "Error: torchrun not found in PATH"; exit 1;
+}
+
 echo "========================================="
 echo "Launching DFLOP Profiling Engine with Parameters:"
 echo "  Number of Nodes : $NNODES"
@@ -30,5 +36,4 @@ torchrun \
   --master_addr="$MASTER_ADDR" \
   --master_port=25000 \
   --node-rank="$RANKNUM" \
-  "$PYTHON_FILE" \
-  "${PYTHON_ARGS[@]}"
+  "$PYTHON_FILE"

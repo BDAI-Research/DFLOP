@@ -1,25 +1,18 @@
 #!/bin/bash
 
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <profiler_script_path> <config_path>"
+if [ "$#" -ne 4 ]; then
+    echo "Usage: $0 <script_path> <mllm_model_name> <vision_model_name> <llm_model_name>"
     exit 1
 fi
 
-SCRIPT_PATH="$1"
-CONFIG_PATH="$2"
+SCRIPT_PATH=$1
+MLLM_MODEL_NAME=$2
+VISION_MODEL_NAME=$3
+LLM_MODEL_NAME=$4
 
-if [ ! -f "$SCRIPT_PATH" ]; then
-    echo "Error: profiler script not found at $SCRIPT_PATH"
-    exit 1
-fi
-
-if [ ! -f "$CONFIG_PATH" ]; then
-    echo "Error: config file not found at $CONFIG_PATH"
-    exit 1
-fi
-
-CONFIG_PATH="$(realpath "$CONFIG_PATH")"
-PROFILE_MODE="${PROFILE_MODE:-data}"
-
-echo "Running data analysis (mode=${PROFILE_MODE}) using config: ${CONFIG_PATH}"
-DFLOP_CONFIG="$CONFIG_PATH" PROFILE_MODE="$PROFILE_MODE" python "$SCRIPT_PATH"
+echo "Running data analysis with MLLM: ${MLLM_MODEL_NAME}, Vision: ${VISION_MODEL_NAME}, LLM: ${LLM_MODEL_NAME}"
+python "${SCRIPT_PATH}" \
+    --mllm_model_name "${MLLM_MODEL_NAME}" \
+    --vision_model_name "${VISION_MODEL_NAME}" \
+    --llm_model_name "${LLM_MODEL_NAME}" \
+    --profile_mode data

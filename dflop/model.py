@@ -1,52 +1,23 @@
 import os
-import re
-import ast
 import math
-import time
-import json
-import copy
-import random
-import yaml
+from typing import Optional, Tuple, Union
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence, List, Tuple, Union
-
-import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import Dataset, DataLoader
-from packaging import version
-from PIL import Image, ImageFile
-
-import transformers
-import tokenizers
 from transformers.modeling_outputs import BaseModelOutputWithPooling
-import torch.nn.functional as F
-# LLaVA 관련 모듈
-from llava.constants import (
-    IGNORE_INDEX,
-    DEFAULT_IMAGE_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IM_END_TOKEN,
-    IMAGE_TOKEN_INDEX
-)
-from llava import conversation as conversation_lib
-from llava.utils import rank0_print, process_video_with_decord
-from llava.model.llava_arch import unpad_image
-from llava.mm_utils import get_anyres_image_grid_shape, process_anyres_image
-from llava.model.multimodal_encoder.siglip_encoder import (
-    SigLipVisionModel,
-    SigLipImageProcessor
-)
-from llava.model.multimodal_projector.builder import build_vision_projector
-from llava.train.train import preprocess
-# torchtune 관련 모듈
-from torchtune_models import flashqwen2
 from torchtune.modules import TransformerDecoder
 from torchtune.modules.attention_utils import _MaskType
 from torchtune.modules.loss import LinearCrossEntropyLoss
+from llava.constants import (
+    IGNORE_INDEX,
+    IMAGE_TOKEN_INDEX
+)
+from llava.model.llava_arch import unpad_image
+from llava.mm_utils import get_anyres_image_grid_shape
+from llava.model.multimodal_encoder.siglip_encoder import SigLipVisionModel
+from llava.model.multimodal_projector.builder import build_vision_projector
 from llava.model.multimodal_encoder.siglip_encoder import SigLipVisionConfig
-from dmllm_utils.internvit_modules import InternVisionConfig, InternVisionModel
+from .internvit_modules import InternVisionConfig, InternVisionModel
 
 
 sig_lip_configs = {
@@ -194,8 +165,6 @@ class LLaVAOVSigLipModule(nn.Module):
         
         self.encoder = vit_model.encoder
         self.embeddings = vit_model.embeddings
-        # self.post_layernorm = vit_model.post_layernorm
-        # self.head = vit_model.head
         self.mm_projector = build_vision_projector(mm_config).to(model_dtype)
         self.mm_projector = self.mm_projector.to(device)
         self.device = device
@@ -207,7 +176,6 @@ class LLaVAOVSigLipModule(nn.Module):
         output_hidden_states: Optional[bool] = True,
         return_dict: Optional[bool] = True,
         ) -> Union[Tuple, BaseModelOutputWithPooling]:
-        # print(f"[Rank : {self.device.index}]Input : {pixel_values}")
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
         assert isinstance(pixel_values, torch.Tensor) , f"images should be a Tensor, got {type(pixel_values)}"
         
@@ -222,7 +190,6 @@ class LLaVAOVSigLipModule(nn.Module):
         last_hidden_state = encoder_outputs[0]
         
         output = self.mm_projector(last_hidden_state)
-        # print(f"[Rank : {torch.distributed.get_rank()}] SigLIP output shape {last_hidden_state.shape}, mm_projector output shape : {output.shape}")
         assert output.shape[-2] == 729
         return output
 
@@ -246,7 +213,6 @@ class LLaVAOVInternVitModule(nn.Module):
         output_hidden_states: Optional[bool] = True,
         return_dict: Optional[bool] = True,
         ) -> Union[Tuple, BaseModelOutputWithPooling]:
-        # print(f"[Rank : {self.device.index}]Input : {pixel_values}")
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
         assert isinstance(pixel_values, torch.Tensor) , f"images should be a Tensor, got {type(pixel_values)}"
         
@@ -285,9 +251,7 @@ class InterVLSigLipModule(nn.Module):
         output_hidden_states: Optional[bool] = True,
         return_dict: Optional[bool] = True,
         ) -> Union[Tuple, BaseModelOutputWithPooling]:
-        # print(f"[Rank : {self.device.index}]Input : {pixel_values}")
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
-        print(f"[Rank : {torch.distributed.get_rank()}] vision input shape : {pixel_values.shape}")
         assert isinstance(pixel_values, torch.Tensor) , f"images should be a Tensor, got {type(pixel_values)}"
         
         hidden_states = self.embeddings(pixel_values)
@@ -305,7 +269,6 @@ class InterVLSigLipModule(nn.Module):
         vit_embeds = vit_embeds.reshape(vit_embeds.shape[0], -1, vit_embeds.shape[-1])
         vit_embeds = vit_embeds.contiguous()
         output = self.mm_projector(vit_embeds)
-        # print(f"[Rank : {torch.distributed.get_rank()}] SigLIP output shape {last_hidden_state.shape}, mm_projector output shape : {output.shape}")
         assert output.shape[-2] == 729
         return output
 
@@ -372,7 +335,6 @@ class LLaVAOVInternVitModule(nn.Module):
         output_hidden_states: Optional[bool] = True,
         return_dict: Optional[bool] = True,
         ) -> Union[Tuple, BaseModelOutputWithPooling]:
-        # print(f"[Rank : {self.device.index}]Input : {pixel_values}")
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
         assert isinstance(pixel_values, torch.Tensor) , f"images should be a Tensor, got {type(pixel_values)}"
         
@@ -412,7 +374,6 @@ class VisionPipeStage(nn.Module):
 
 
     def forward(self, pixel_values):
-        # print(f"[Rank : {torch.distributed.get_rank()}], Input shape : {pixel_values.shape}")
         pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
         if self.embeddings is not None:
             hidden_states = self.embeddings(pixel_values)
@@ -422,20 +383,17 @@ class VisionPipeStage(nn.Module):
         if self.mm_projector is not None:
             if self.is_internvl:
                 vit_embeds = encoder_outputs[0]
-                # print(f"[ViT output] : {vit_embeds.shape}")
                 h = w = int(vit_embeds.shape[1] ** 0.5)
                 vit_embeds = vit_embeds.reshape(vit_embeds.shape[0], h, w, -1)
                 vit_embeds = pixel_shuffle(vit_embeds, scale_factor=self.downsample_ratio)
                 vit_embeds = vit_embeds.reshape(vit_embeds.shape[0], -1, vit_embeds.shape[-1])
                 vit_embeds = vit_embeds.contiguous()
-                # print(f"[mm_projector input] : {vit_embeds.shape}")
                 output = self.mm_projector(vit_embeds)
             else:
                 last_hidden_state = encoder_outputs[0]
                 output = self.mm_projector(last_hidden_state)
         else:
             output = encoder_outputs[0]
-        # print(f"[Rank : {torch.distributed.get_rank()}], output shape : {output.shape}")
         return output
 
 class DflopPipeStage(TransformerDecoder):
@@ -443,10 +401,6 @@ class DflopPipeStage(TransformerDecoder):
         print(f"[Rank : {torch.distributed.get_rank()}] Initializing DflopPipeStage with stage_id: {stage_id}, num_stages: {vision_stages + llm_stages}")
         model = llm_model
         tok_embeddings = model.tok_embeddings
-        model_layers = model.layers
-        max_seq_len = model.max_seq_len
-        num_heads = model.num_heads
-        head_dim = model.head_dim
         norm = model.norm
         output = model.output
         if stage_id in vision_stages:
@@ -476,46 +430,33 @@ class DflopPipeStage(TransformerDecoder):
         self.embed_tokens = None
         self.stage_id = stage_id
         print(f"Vision stage : {vision_stages} LLM stages : {llm_stages}, Stage id : {stage_id}")
-        # Configurations
         self.image_grid_pinpoints = config.image_grid_pinpoints
         self.image_size = config.image_size
         self.num_patches_per_side = config.num_patches_per_side
         self.tokenizer_model_max_length = config.tokenizer_model_max_length
-        # print(f"[Rank : {torch.distributed.get_rank()}] Stage Id : {stage_id}, Num Stages : {num_stages}, Layers per Rank : {layers_per_rank}")
         if stage_id in vision_stages:
             self.vision_module = vision_module
             self.layers = None
             self.output = None
             self.norm = None
         else:
-            # num_layers = llm_config["num_layers"]
-            # layers_per_stage = num_layers // len(llm_stages)
-            # remain_layers = num_layers % len(llm_stages)
-            # stage_layer_counts = [layers_per_stage + (1 if i < remain_layers else 0) for i in range(len(llm_stages))]
-            # stage_idx = llm_stages.index(stage_id)
-            # layers_per_rank = stage_layer_counts[stage_idx]
-            # transformer_layer = model.layers[0]
             if stage_id == llm_stages[0]:
                 self.image_newline = nn.Parameter(torch.empty(llm_config["embed_dim"], dtype=model_dtype))
                 self.embed_tokens = tok_embeddings
-                # layers = [copy.deepcopy(transformer_layer) for _ in range(layers_per_rank)]
                 self.layers = model.layers
                 self.output = None
                 self.norm = None
             if stage_id == llm_stages[-1]:
-                # layers = [copy.deepcopy(transformer_layer) for _ in range(layers_per_rank)]
                 self.layers = model.layers
                 self.norm = norm
                 self.output = output
                 self.loss_fn = LinearCrossEntropyLoss()
                 self.loss_fn.set_model_output(model)            
             if (stage_id != llm_stages[0]) and (stage_id != llm_stages[-1]):
-                # layers = [copy.deepcopy(transformer_layer) for _ in range(layers_per_rank)]
                 self.layers = model.layers
                 self.output = None
                 self.norm = None
             self.device = device
-        # print(f"[Rank : {torch.distributed.get_rank()}] Model Initialization finished")
 
     def get_2dPool(self, image_feature, stride=2):
         height = width = self.num_patches_per_side
@@ -609,7 +550,6 @@ class DflopPipeStage(TransformerDecoder):
         new_input_embeds = []
         new_labels = []
         cur_image_idx = 0
-        # rank_print("Inserting Images embedding")
         for batch_idx, cur_input_ids in enumerate(input_ids):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0:
@@ -638,7 +578,6 @@ class DflopPipeStage(TransformerDecoder):
                 cur_new_input_embeds.append(cur_input_embeds_no_im[i])
                 cur_new_labels.append(cur_labels_noim[i])
                 if i < num_images:
-                    # print(f"[Rank : {torch.distributed.get_rank()}] num_images {num_images} cur_image_idx {cur_image_idx}")
                     try:
                         cur_image_features = image_features[cur_image_idx]
                     except IndexError:
@@ -648,8 +587,6 @@ class DflopPipeStage(TransformerDecoder):
                     cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
 
             cur_new_input_embeds = [x.to(self.device) for x in cur_new_input_embeds]
-
-            # import pdb; pdb.set_trace()
             cur_new_input_embeds = torch.cat(cur_new_input_embeds)
             cur_new_labels = torch.cat(cur_new_labels)
 
@@ -684,12 +621,9 @@ class DflopPipeStage(TransformerDecoder):
         **kwargs
         
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
-        # if self.local_rank == 0:
-        #     print(f"[Rank : {torch.distributed.get_rank()}] Input shape: {input_embeds.shape}")
         # shape: [b, s, d]
         if self.stage_id in self.vision_stages:
             input_embeds = self.vision_module(input_embeds)
-            # print(f"[Rank : {torch.distributed.get_rank()}] Output shape: {input_embeds.shape}")
             return (input_embeds, )
         if self.stage_id == self.llm_stages[0]:
             split_sizes = kwargs['split_sizes']
@@ -714,7 +648,6 @@ class DflopPipeStage(TransformerDecoder):
                 encoder_mask=encoder_mask,
                 input_pos=input_pos,
             )
-        # print(f"[Rank:{self.device.index}] h shape : {h.shape}")
         # shape: [b, seq_len, out_dim]
         if self.output:
             if len(self.layers) in self.output_hidden_states:
@@ -723,11 +656,7 @@ class DflopPipeStage(TransformerDecoder):
             # Output list if hidden states are requested, otherwise just the output
             # TODO: always output a list to have a consistent output type
             output = output if not hidden else [*hidden, output]
-            # print(f"[Rank : {torch.distributed.get_rank()}] Input shape: {input_embeds.shape}, Output shape: {output.shape}")
             return output
         else:
             output = h
-            # print(f"[Rank : {torch.distributed.get_rank()}] Input shape: {input_embeds.shape}, Output shape: {output.shape}")
             return (output, )
-
-OursPipeStage = DflopPipeStage
