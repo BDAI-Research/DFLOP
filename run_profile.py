@@ -33,14 +33,13 @@ def main():
     rank = dist.get_rank()
     background_process = None
     try:
-        # if rank == 0:
-        #     if not result_path.exists():
-        #         result_path.mkdir(parents=True, exist_ok=True)
-        #     print("Rank 0: Starting data analysis task in the background.")
-        #     background_process = subprocess.Popen(data_analysis_task)
+        if rank == 0:
+            if not result_path.exists():
+                result_path.mkdir(parents=True, exist_ok=True)
+            print("Rank 0: Starting data analysis task in the background.")
+            background_process = subprocess.Popen(data_analysis_task)
         # Assign and run tasks
-        profiling_tasks = [llm_thr_full_task, llm_thr_skip_attn_task]
-        # profiling_tasks = [vision_mem_task, llm_mem_task, vision_thr_task, llm_thr_full_task, llm_thr_skip_attn_task]
+        profiling_tasks = [vision_mem_task, llm_mem_task, vision_thr_task, llm_thr_full_task, llm_thr_skip_attn_task]
         world_size = dist.get_world_size()
         assigned_tasks = []
 
