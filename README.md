@@ -90,5 +90,5 @@ Each node must have a unique rank_number, assigned sequentially (e.g., 0, 1, 2, 
 so that every node can correctly identify its role in the distributed profiling job.
 
 ```bash
-bash run_training.sh <num_nodes> <rank_number> </path/to/dflop/train.py> <master_addr>
+bash run_training.sh <num_nodes> <rank_number> <master_addr>
 ```
