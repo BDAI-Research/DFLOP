@@ -281,9 +281,9 @@ if __name__=="__main__":
     vision_cfg = models_cfg.get("vision", {})
     llm_cfg = models_cfg.get("llm", {})
 
-    result_path_resolved = resolve_path(config.get("paths", {}).get("profile_result_dir"))
+    result_path_resolved = resolve_path(config.get("paths", {}).get("result_dir"))
     if result_path_resolved is None:
-        raise ValueError("paths.profile_result_dir must be provided in the configuration.")
+        raise ValueError("paths.result_dir must be provided in the configuration.")
     result_path = str(result_path_resolved)
 
     mllm_model_name = models_cfg.get("mllm")
