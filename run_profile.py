@@ -39,7 +39,8 @@ def main():
             print("Rank 0: Starting data analysis task in the background.")
             background_process = subprocess.Popen(data_analysis_task)
         # Assign and run tasks
-        profiling_tasks = [vision_mem_task, llm_mem_task, vision_thr_task, llm_thr_full_task, llm_thr_skip_attn_task]
+        profiling_tasks = [vision_mem_task]
+        # profiling_tasks = [vision_mem_task, llm_mem_task, vision_thr_task, llm_thr_full_task, llm_thr_skip_attn_task]
         world_size = dist.get_world_size()
         assigned_tasks = []
 

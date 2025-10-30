@@ -30,7 +30,9 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
     def __init__(self, config, image_size, vocab_size, parallel_config, vision_config, llm_config, tokenizer, dtype, num_batches, sched_data_path, scale_factor=10000):
         super().__init__(config, llm_config, tokenizer, dtype)
         self.num_batches = num_batches
-        self.image_size = image_size
+        self.img_h = self.img_w = image_size
+        self.in_channels = 3
+        self.patch_dim = 14
         
         self.vision_hidden_size = vision_config.hidden_size
         self.vision_intermediate_size = vision_config.intermediate_size
@@ -57,12 +59,13 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
         self.vision_num_layers = vision_config.num_hidden_layers
         self.llm_num_layers = llm_config["num_layers"]
 
+
     def get_data_dur_info(self, image_list, pos_ids_list):
         data_info = []
         for img, pos_ids in zip(image_list, pos_ids_list):
             img_batch_size = img.shape[0]
             llm_input_seq_len = pos_ids.shape[1]
-            vision_flops = vision_module_flops(img_batch_size, self.image_size, self.vision_num_layers, self.vision_hidden_size, self.vision_intermediate_size, self.llm_hidden_size)/1e12
+            vision_flops = vision_module_flops(img_batch_size, self.in_channels, self.img_h, self.img_w, self.patch_dim, self.vision_num_layers, self.vision_hidden_size, self.vision_intermediate_size, self.llm_hidden_size)/1e12
             llm_flops = llm_module_flops(llm_input_seq_len, 1, self.llm_hidden_size, self.llm_num_layers, self.query_groups, self.attention_heads, self.ffn_hidden_size, self.vocab_size, act_recomp=True)/1e12
             vision_dur = int(vision_flops / (self.v_thr * self.v_dp_size * self.v_pp_size * self.v_tp_size) * self.scale_factor)
             llm_dur = int(llm_flops / (self.l_thr * self.l_dp_size * self.l_pp_size * self.l_tp_size) * self.scale_factor)
@@ -341,5 +344,6 @@ if __name__ == "__main__":
     sampler = RandomSampler(dataset, generator=generator)
     dataloader = DataLoader(dataset, batch_size=global_batch_size, sampler=sampler, collate_fn=data_collator, num_workers=8)
     data_iter = iter(dataloader)
+    
     for step in range(num_training_steps):
         next(data_iter)
