@@ -24,7 +24,7 @@ DFLOP consists of three core components:
    - Reduces GPU idle time caused by pipeline bubbles.
 
 <div align="center">
-  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="55%">
+  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="600">
 </div>
 
 ## Getting Started
