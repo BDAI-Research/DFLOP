@@ -1134,7 +1134,6 @@ class PipelineStage(_PipelineStageBase):
 
         self.prev_rank = stage_global_rank((self.group_rank - 1) % self.group_size)
         self.next_rank = stage_global_rank((self.group_rank + 1) % self.group_size)
-        # print(f"{self.log_prefix} prev_rank: {self.prev_rank}, next_rank: {self.next_rank}")
 
         dbg_str = (
             f"Finished pipeline stage init, {self.stage_index=}, {self.is_first=}, "  # noqa: G004

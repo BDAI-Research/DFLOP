@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 
 
 class _ComputationType(Enum):
-    # TODO(whc) rename to _ActType?
     FORWARD = 1
     BACKWARD_INPUT = 2
     BACKWARD_WEIGHT = 3
@@ -274,7 +273,6 @@ class _PipelineSchedule(ABC):
 
     def _maybe_compute_loss(self, stage, output, target_mbs, mb_index):
         if stage.is_last and self._stage.is_llm and self._has_backward:
-            # print(f"Rank {stage.device} target_mbs : {len(target_mbs)}, computing loss for microbatch {mb_index}")
             loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
             self._internal_losses.append(loss)
 
@@ -452,9 +450,6 @@ class PipelineScheduleSingle(_PipelineSchedule):
         losses: a list to store the losses for each microbatch.
         """
         # Clean per iteration
-        # before_step = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-        # if torch.distributed.get_rank() < 2:
-        #     print(f"[Rank {torch.distributed.get_rank()}] Before Step Peak: {before_step:.2f} GB")
         self._stage.clear_runtime_states()
         if len(kwargs_list) == 0:
             kwargs_list = [{}] * self._n_microbatches
@@ -462,17 +457,10 @@ class PipelineScheduleSingle(_PipelineSchedule):
         # Return merged results per original format
         if self._stage.is_last and self._has_backward:
             return None
-            # return self._merge_outputs(self._stage.output_chunks)
         else:
-            # print(f"Rank {self._stage.device} step ended")
             return None
     
     def set_stage_info(self, input_meta, output_meta):
-        # if self._stage.is_last:
-            # print(f"Rank {self._stage.device} is last stage")
-        # print(f"Stage : {self._stage.stage_index}, Input meta: {input_meta}, Output meta: {[out[0] for out in output_meta]}")
-        # print(f"[Rank : {torch.distributed.get_rank()}] starts set stage info")
-        # first_block = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         for chunk_id in range(self._n_microbatches):
             if not self._stage.is_first:
                 recv_infos = tuple(
@@ -516,9 +504,7 @@ class PipelineScheduleSingle(_PipelineSchedule):
                             r.buffer.requires_grad_(True)
 
                     self._stage.args_recv_info[chunk_id] = recv_infos
-            # print(f"Rank {self._stage.device} args_recv_info for chunk {chunk_id} : {self._stage.args_recv_info[chunk_id]}")
         # Act send info : only contains the next stage index
-        # second_block = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         for idx in range(len(output_meta[0])):
             if self._stage.is_vision_connect_rank: # Vision's connect rank in vision last stage -> sends outputs to LLM's first stage
                 self._stage.act_send_info[idx] = self._stage.llm_first_group_ranks # self._stage.act_send_info will iterate over these ranks
@@ -526,7 +512,6 @@ class PipelineScheduleSingle(_PipelineSchedule):
                 self._stage.act_send_info[idx] = [self._stage.stage_index + 1]
             else: # LLM's last stage -> nothing to send
                 self._stage.act_send_info[idx] = []
-        # print(f"Rank {self._stage.device} act_send_info : {self._stage.act_send_info}")
         if self._has_backward:
             self.chunks = self._n_microbatches
             for mb_index in range(self._n_microbatches):
@@ -568,10 +553,10 @@ class PipelineScheduleSingle(_PipelineSchedule):
                     self._stage.grad_recv_info[mb_index] = grad_recv_infos
                 else:
                     self._stage.grad_recv_info[mb_index] = tuple()
-                # print(f"Rank {self._stage.device} grad_recv_info for chunk {chunk_id} : {self._stage.grad_recv_info[mb_index]}")
                     # Create bwd send infra lazily
         if self._stage.grad_send_info is None:
             self._stage.grad_send_info = self._stage._create_grad_send_info(self._stage.args_recv_info[0])
+
 class ScheduleGPipe(PipelineScheduleSingle):
     """
     The GPipe schedule.
@@ -605,21 +590,17 @@ class ScheduleGPipe(PipelineScheduleSingle):
                 works = _sorted_batch_p2p(ops, desc="fwd_recv")
                 for work in works.values():
                     work.wait()
-                # if self._stage.stage_index == 3:
-                #     print(f"Rank {self._stage.device} Forwarding microbatch {i} with args: ", arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
                 output = self._stage.forward_one_chunk(i, arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
                 ops = self._stage.get_fwd_send_ops(i)
                 works = _sorted_batch_p2p(ops, desc="fwd_send")
                 fwd_sends_to_wait.extend(works.values())
             logger.debug("[%s] Forwarded microbatch %s", self._stage.stage_index, i)           
             self._maybe_compute_loss(self._stage, output, target_mbs, i)
-        # print(f"Rank {self._stage.device} Forwarded all microbatches")
         # Wait for all forward sends to finish
         # This should not have performance impact because by the time the first
         # backward arrives all the forward sends should have been finished.
         for work in fwd_sends_to_wait:
             work.wait()
-        # print(f"Rank {self._stage.device} Forward sends finished, has backward: {self._has_backward}")
         # No loss function, no need to run backward
         if not self._has_backward:
             return
@@ -672,10 +653,7 @@ class Schedule1F1B(PipelineScheduleSingle):
         Args:
             microbatches: list of microbatch args.
         """
-        # before_m_step = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
         self.set_stage_info(input_meta, output_meta)
-        # after_set_stage_info = torch.cuda.memory_stats()["active_bytes.all.peak"] / 1024**3
-
         # Last stage has 1 warmup, second-to-last 2 warmups, ...
         # first stage `num_stages` warmups
         if self._stage.is_vision:
