@@ -7,8 +7,8 @@ import itertools
 import logging
 import re
 import time
-from abc import ABC, abstractmethod
-from collections import Counter, defaultdict
+from abc import ABC
+from collections import defaultdict
 from enum import Enum
 from typing import (
     Any,
@@ -17,7 +17,6 @@ from typing import (
     List,
     NamedTuple,
     Optional,
-    Set,
     Tuple,
     TYPE_CHECKING,
     Union,
@@ -25,12 +24,10 @@ from typing import (
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import FSDPModule, UnshardHandle
 from torch.profiler import record_function
 from .dflop_pp_stage_module import _RecvInfo
-from torch.distributed.pipelining.microbatch import merge_chunks, split_args_kwargs_into_chunks, TensorChunkSpec
+from torch.distributed.pipelining.microbatch import merge_chunks, TensorChunkSpec
 from torch.distributed.pipelining.stage import _PipelineStageBase
-from utils.profiler import  AllocatedMemContext
 
 if TYPE_CHECKING:
     from torch.distributed import Work

@@ -24,7 +24,7 @@ DFLOP consists of three core components:
    - Reduces GPU idle time caused by pipeline bubbles.
 
 <div align="center">
-  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="70%">
+  <img src="figure/DFLOP_overview.png" alt="DFLOP System Overview" width="30%">
 </div>
 
 ## Getting Started
@@ -50,7 +50,13 @@ pip install flash-attn==2.7.3 --no-build-isolation
 - [Multiple Image Dataset](https://huggingface.co/datasets/lmms-lab/M4-Instruct-Data)
 - [Video Dataset](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K)
 
-After downloading, set the dataset paths in [`configs/dataset_config.yaml`](configs/dataset_config.yaml).
+After downloading:
+	•	Place Single Image Dataset and Multiple Image Dataset inside the image_folder
+(e.g., data/image_folder/)
+	•	Place Video Dataset inside the video_folder
+(e.g., data/video_folder/)
+
+Set these dataset paths in the dataset paths in [`configs/dataset_config.yaml`](configs/dataset_config.yaml).
 
 
 ## How to Use DFLOP
@@ -62,6 +68,11 @@ After downloading, set the dataset paths in [`configs/dataset_config.yaml`](conf
 - `llm_model_name` can be selected from:
   - **qwen2.5**
   - **llama3**
+
+DFLOP uses a separate configuration file, [`configs/dflop_config.yaml`](configs/dflop_config.yaml),
+to define model selection, dataset paths, hardware resources, and training parameters.
+
+You must fill in the commented sections before running DFLOP.
 
 ### Running the DFLOP Profiling Engine
 Navigate to [scripts](scripts) folder.

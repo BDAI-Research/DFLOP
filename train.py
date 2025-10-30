@@ -73,22 +73,21 @@ if __name__ == "__main__":
     config = load_config()
 
     paths_cfg = config.get("paths", {})
-    model_paths_cfg = config.get("model_paths", {})
+    model_paths_cfg = paths_cfg.get("model_dir", {})
 
     dataset_path = resolve_path(paths_cfg.get("dataset_yaml"))
     image_folder = resolve_path(paths_cfg.get("image_folder"))
     video_folder = resolve_path(paths_cfg.get("video_folder"))
-    data_sched_config_path = resolve_path(paths_cfg.get("data_scheduler_config"))
-    idx_path = resolve_path(paths_cfg.get("data_index_file"))
-    result_path = resolve_path(paths_cfg.get("train_result_dir"))
+
+    result_path = resolve_path(paths_cfg.get("result_dir"))
+    data_sched_config_path_str = f"{result_path}/data_sched_config.yaml"
+    idx_path_str = f"{result_path}/sched_data_idx.json"
 
     required_paths = {
         "paths.dataset_yaml": dataset_path,
         "paths.image_folder": image_folder,
         "paths.video_folder": video_folder,
-        "paths.data_scheduler_config": data_sched_config_path,
-        "paths.data_index_file": idx_path,
-        "paths.train_result_dir": result_path,
+        "paths.result_path": result_path,
     }
     missing_paths = [key for key, value in required_paths.items() if value is None]
     if missing_paths:
@@ -97,10 +96,8 @@ if __name__ == "__main__":
     dataset_path_str = str(dataset_path)
     image_folder_str = str(image_folder)
     video_folder_str = str(video_folder)
-    data_sched_config_path_str = str(data_sched_config_path)
-    idx_path_str = str(idx_path)
     result_path_str = str(result_path)
-
+    scheulder_path_str = str(resolve_path("../scheduler.py"))
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device(f"cuda:{local_rank}") if torch.cuda.is_available() else torch.device("cpu")
     timeout = 15
@@ -110,7 +107,7 @@ if __name__ == "__main__":
     if global_rank == 0:
         if os.path.exists(idx_path_str):
             os.remove(idx_path_str)
-        command = ['python', './scheduler.py']
+        command = ['python', scheulder_path_str]
         scheduler_env = os.environ.copy()
         scheduler_env["DFLOP_CONFIG"] = os.environ["DFLOP_CONFIG"]
         process = subprocess.Popen(command, env=scheduler_env)
@@ -130,7 +127,7 @@ if __name__ == "__main__":
 
     model_path_resolved = resolve_path(model_paths_cfg.get(llm_model_name))
     if model_path_resolved is None:
-        raise ValueError(f"Missing model path for '{llm_model_name}' in model_paths configuration.")
+        raise ValueError(f"Missing model path for {llm_model_name} in model_paths configuration.")
     model_path = str(model_path_resolved)
 
     vision_tp_plans = {"siglip" : llava_ov_siglip_tp_plan, "internvit": llavaov_internvit_tp_plan}
@@ -255,7 +252,6 @@ if __name__ == "__main__":
     stage_model = stage_model.to(device)
     stage_model = DistributedDataParallel(stage_model, device_ids=[local_rank], device_mesh=dp_mesh)
     stage_model.train()
-    print(f"[Rank : {global_rank}] stage_model parallelized {stage_model}")
     dist.barrier()
     stage = PipelineStage(
         stage_model,

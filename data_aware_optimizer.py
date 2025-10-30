@@ -2,15 +2,18 @@ import os
 import pickle
 import pandas as pd
 import numpy as np
+import yaml
 from copy import deepcopy
 from scipy.interpolate import interp1d
 from dflop.model import llm_configs, vision_configs
+from dflop.prof_utils import vision_module_flops, llm_module_flops
 from dflop.config import (
     get_config_path,
     load_config,
     resolve_path,
     reset_config_cache,
 )
+
 
 class LlmThr:
     def __init__(self, linear_thr_tp, llm_linear_ratio, llm_attn_ratio, llm_attn_weighted_sum):
@@ -73,56 +76,6 @@ def calculate_act_peak_factor(df, image_size=None, patch_size=14):
         non_trans_alpha_tp = a / (batch_size * seq_len)
         act_peak_tp[tp] = [trans_alpha_tp, non_trans_alpha_tp]
     return act_peak_tp
-
-def mm_projector_flops(gbs, seq_len, vision_features, llm_features, act_recomp=True):
-    flops1 = 2 * gbs * seq_len * vision_features * llm_features
-    flops2 = 2 * gbs * seq_len * llm_features * llm_features
-    total_flops = 3 * (flops1 + flops2)
-    if act_recomp:
-        total_flops = total_flops * (4/3)
-    return total_flops
-
-def vision_module_flops(gbs, in_channels, img_h, img_w, patch_dim, layers, hs, intermediate_size, llm_features, act_recomp=True):
-    img_seq_len = (img_h // patch_dim) * (img_w // patch_dim)
-    attn_flops = 3 * ((8 * hs * hs * img_seq_len) + (4 * img_seq_len * img_seq_len * hs))
-    mlp_flops = 3 * 4 * img_seq_len * hs * intermediate_size
-    transformer_flops = gbs * layers * (attn_flops + mlp_flops)
-    embedding_flops = (
-        3 * 2 * gbs * hs * in_channels * img_h * img_w
-    )
-    mm_flops = mm_projector_flops(gbs, img_seq_len, hs, llm_features)  # mm_projector의 FLOPs
-    total_flops = transformer_flops + embedding_flops + mm_flops
-    if act_recomp:
-        total_flops = total_flops * (4/3)  
-    return total_flops
-
-def llm_module_flops(seq_len, gbs, hidden_size, layers, query_groups, attention_heads, ffn_hidden_size, vocab_size, act_recomp=True):    
-    causal_self_attn = True
-    gated_linear_multiplier = 2
-
-    # --- Attention FLOPs ---
-    attention_flops = (
-        3 * 2 * gbs * layers * seq_len * hidden_size * hidden_size *
-        (
-            (query_groups / attention_heads * 2 + 1)
-            + (seq_len / hidden_size * 2 * (0.5 if causal_self_attn else 1))
-            + 1
-        )
-    )
-
-    # --- MLP FLOPs ---
-    mlp_flops = (
-        3 * 2 * gbs * layers * seq_len * hidden_size *
-        (1 + gated_linear_multiplier) *
-        ffn_hidden_size # 일반 ffn_hidden_size 사용
-    )
-
-    # --- Vocab FLOPs ---
-    vocab_flops = 3 * 2 * gbs * seq_len * hidden_size * vocab_size
-    total_flops = attention_flops + mlp_flops + vocab_flops
-    if act_recomp:
-        total_flops = total_flops * (4/3)
-    return total_flops
 
 def get_attn_flops(seq_len, embed_dim, num_hidden_layers, act_recomp=True):
     attn_flops = 3 * (4 * seq_len * seq_len * embed_dim) * num_hidden_layers * 0.5
@@ -280,6 +233,7 @@ if __name__=="__main__":
     models_cfg = config.get("models", {})
     vision_cfg = models_cfg.get("vision", {})
     llm_cfg = models_cfg.get("llm", {})
+    
 
     result_path_resolved = resolve_path(config.get("paths", {}).get("result_dir"))
     if result_path_resolved is None:
@@ -297,6 +251,7 @@ if __name__=="__main__":
     n_gpus = hardware_cfg.get("n_gpus")
     gpu_memory = hardware_cfg.get("gpu_memory_gb")
     gbs = training_cfg.get("global_batch_size")
+    num_training_steps = training_cfg.get("training_steps")
 
     required_fields = {
         "models.mllm": mllm_model_name,
@@ -400,87 +355,110 @@ if __name__=="__main__":
             for seq_len in [1024,2048,4096,8192]:
                 llm_thr_result = l_thr[tp_size](seq_len).item()
                 llm_thr_result_list.append((tp_size, seq_len, llm_thr_result))
-parallel_configs = []
-for v_gpus in range(1, n_gpus):
-    l_gpus = n_gpus - v_gpus
-    v_configs = []
-    for v_tp in v_thr.keys():
-        if v_gpus % v_tp == 0:
-            v_rem = v_gpus // v_tp
-            for v_pp in range(1, v_rem + 1):
-                if v_rem % v_pp == 0:
-                    v_dp = v_rem // v_pp
-                    v_configs.append([v_tp, v_pp, v_dp])
-    if not v_configs:
-        continue
-    l_configs = []
-    for l_tp in llm_thr_dict.keys():
-        if l_gpus % l_tp == 0:
-            l_rem = l_gpus // l_tp
-            for l_pp in range(1, l_rem + 1):
-                if l_rem % l_pp == 0:
-                    l_dp = l_rem // l_pp
-                    l_configs.append([l_tp, l_pp, l_dp])
-
-    for v_c in v_configs:
-        for l_c in l_configs:
-            parallel_configs.append(v_c + l_c)
-
-min_dur = float('inf')
-opt_m_batches = float('inf')
-opt_config = None
-passed_configs = []
-for p_config in parallel_configs:
-    v_tp, v_pp, v_dp, l_tp, l_pp, l_dp = p_config
-    v_memory = v_mem(v_tp, v_pp, max_batch_size * l_dp / v_dp, vision_seq_len, v_pp + l_pp)
-    l_memory = l_mem(l_tp, l_pp, 1, max_seq_len, l_pp)
-    if (v_memory > gpu_memory) or (l_memory > gpu_memory):
-        continue
-    passed_configs.append(p_config)
-    max_m = int(gbs / l_dp)
-    for m in range(1, max_m+1):
-        l_mbs = gbs / (m * l_dp)
-        v_mbs = gbs / (m * v_dp)
-        target_batch_size = mean_batch_size * v_mbs
-        target_seq_len = mean_seq_len * l_mbs
-        if v_mbs < 1 or l_mbs < 1:
+    parallel_configs = []
+    for v_gpus in range(1, n_gpus):
+        l_gpus = n_gpus - v_gpus
+        v_configs = []
+        for v_tp in v_thr.keys():
+            if v_gpus % v_tp == 0:
+                v_rem = v_gpus // v_tp
+                for v_pp in range(1, v_rem + 1):
+                    if v_rem % v_pp == 0:
+                        v_dp = v_rem // v_pp
+                        v_configs.append([v_tp, v_pp, v_dp])
+        if not v_configs:
             continue
-        if target_batch_size <= max_batch_size and target_seq_len <= max_seq_len:
-            break
-    target_v_thr = v_thr[v_tp][0](target_batch_size)
-    target_l_thr = l_thr[l_tp](target_seq_len)
-    v_flop = (mean_v_flop * v_mbs)
-    l_flop = (mean_l_flop * l_mbs)
-    v_dur = v_flop / (target_v_thr * v_tp * v_pp)
-    l_dur = l_flop / (target_l_thr * l_tp * l_pp)
-    slowest_stage = max(v_dur, l_dur)
-    duration = (m + v_pp + l_pp - 1) * slowest_stage
-    if (duration < min_dur * 1.1) and (m < opt_m_batches):
-        opt_m_batches = m
-        min_dur = duration
-        opt_config = p_config + [m]
-        log_dict = {
-            "v_tp": v_tp,
-            "v_pp": v_pp,
-            "v_dp": v_dp,
-            "l_tp": l_tp,
-            "l_pp": l_pp,
-            "l_dp": l_dp,
-            "num_microbatches": m,
-            "v_mbs": v_mbs,
-            "l_mbs": l_mbs,
-            "target_batch_size": target_batch_size,
-            "target_seq_len": target_seq_len,
-            "vision_memory": v_memory,
-            "llm_memory": l_memory,
-            "v_duration": v_dur,
-            "l_duration": l_dur,
-            "bottleneck_duration": slowest_stage,
-            "total_duration": duration,
-            "v_thr" : target_v_thr,
-            "l_thr" : target_l_thr,
+        l_configs = []
+        for l_tp in llm_thr_dict.keys():
+            if l_gpus % l_tp == 0:
+                l_rem = l_gpus // l_tp
+                for l_pp in range(1, l_rem + 1):
+                    if l_rem % l_pp == 0:
+                        l_dp = l_rem // l_pp
+                        l_configs.append([l_tp, l_pp, l_dp])
+
+        for v_c in v_configs:
+            for l_c in l_configs:
+                parallel_configs.append(v_c + l_c)
+
+    min_dur = float('inf')
+    opt_m_batches = float('inf')
+    opt_config = None
+    passed_configs = []
+    for p_config in parallel_configs:
+        v_tp, v_pp, v_dp, l_tp, l_pp, l_dp = p_config
+        v_memory = v_mem(v_tp, v_pp, max_batch_size * l_dp / v_dp, vision_seq_len, v_pp + l_pp)
+        l_memory = l_mem(l_tp, l_pp, 1, max_seq_len, l_pp)
+        if (v_memory > gpu_memory) or (l_memory > gpu_memory):
+            continue
+        passed_configs.append(p_config)
+        max_m = int(gbs / l_dp)
+        for m in range(1, max_m+1):
+            l_mbs = gbs / (m * l_dp)
+            v_mbs = gbs / (m * v_dp)
+            target_batch_size = mean_batch_size * v_mbs
+            target_seq_len = mean_seq_len * l_mbs
+            if v_mbs < 1 or l_mbs < 1:
+                continue
+            if target_batch_size <= max_batch_size and target_seq_len <= max_seq_len:
+                break
+        target_v_thr = v_thr[v_tp][0](target_batch_size)
+        target_l_thr = l_thr[l_tp](target_seq_len)
+        v_flop = (mean_v_flop * v_mbs)
+        l_flop = (mean_l_flop * l_mbs)
+        v_dur = v_flop / (target_v_thr * v_tp * v_pp)
+        l_dur = l_flop / (target_l_thr * l_tp * l_pp)
+        slowest_stage = max(v_dur, l_dur)
+        duration = (m + v_pp + l_pp - 1) * slowest_stage
+        if (duration < min_dur * 1.1) and (m < opt_m_batches):
+            opt_m_batches = m
+            min_dur = duration
+            opt_config = p_config + [m]
+            log_dict = {
+                "v_tp": v_tp,
+                "v_pp": v_pp,
+                "v_dp": v_dp,
+                "l_tp": l_tp,
+                "l_pp": l_pp,
+                "l_dp": l_dp,
+                "num_microbatches": m,
+                "v_mbs": v_mbs,
+                "l_mbs": l_mbs,
+                "target_batch_size": target_batch_size,
+                "target_seq_len": target_seq_len,
+                "vision_memory": v_memory,
+                "llm_memory": l_memory,
+                "v_duration": v_dur,
+                "l_duration": l_dur,
+                "bottleneck_duration": slowest_stage,
+                "total_duration": duration,
+                "v_thr" : target_v_thr.item(),
+                "l_thr" : target_l_thr,
+            }
+    if opt_config is not None and 'log_dict' in locals():
+        print("\n--- Optimal 3D parallelism ---")
+        for k, v in log_dict.items():
+            print(f"{k:>20}: {v}")
+
+    output = {
+        "seed": 42,
+        "vision_model_name": vision_model_name,
+        "vision_model_size": vision_model_size,
+        "llm_model_name": llm_model_name,
+        "llm_model_size": llm_model_size,
+        "global_batch_size": gbs,
+        "num_batches": log_dict["num_microbatches"],
+        "num_training_steps": num_training_steps,
+        "parallel_config": {
+            "vision_tp_size": int(log_dict["v_tp"]),
+            "vision_pp_size": int(log_dict["v_pp"]),
+            "vision_dp_size": int(log_dict["v_dp"]),
+            "vision_thr": round(float(log_dict["v_thr"]), 2),
+            "llm_tp_size": int(log_dict["l_tp"]),
+            "llm_pp_size": int(log_dict["l_pp"]),
+            "llm_dp_size": int(log_dict["l_dp"]),
+            "llm_thr": round(float(log_dict["l_thr"]), 2),
         }
-if opt_config is not None and 'log_dict' in locals():
-    print("\n--- Optimal 3D parallelism ---")
-    for k, v in log_dict.items():
-        print(f"{k:>20}: {v}")
+            }
+    with open(f"{result_path}/data_sched_config.yaml", "w") as f:
+        yaml.safe_dump(output, f, sort_keys=False)

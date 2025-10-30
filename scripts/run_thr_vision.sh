@@ -12,7 +12,7 @@ VISION_MODEL_SIZE=$4
 
 echo "Running throughput profiler with MLLM: ${MLLM_MODEL_NAME}, Vision: ${VISION_MODEL_NAME}, Size: ${VISION_MODEL_SIZE}"
 for TP_SIZE in 1 2 4 8; do
-    for LAYERS in 16 20; do
+    for LAYERS in 16; do
         echo "=== Running with TP size=${TP_SIZE} num_hidden_layers=${LAYERS} ==="
         torchrun --nproc-per-node=$TP_SIZE "${SCRIPT_PATH}" \
             --mllm_model_name "${MLLM_MODEL_NAME}" \

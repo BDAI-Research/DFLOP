@@ -14,6 +14,7 @@ from llava.constants import IGNORE_INDEX
 from llava.model.multimodal_encoder.siglip_encoder import SigLipImageProcessor
 from dflop.data import TrainConfig, LazySupervisedDataset, DataCollatorForSupervisedDataset, SigLipImageProcessor
 from dflop.model import llm_configs, vision_configs
+from dflop.prof_utils import vision_module_flops, llm_module_flops
 from dflop.config import (
     get_config_path,
     load_config,
@@ -56,62 +57,13 @@ class IlpDataCollator(DataCollatorForSupervisedDataset):
         self.vision_num_layers = vision_config.num_hidden_layers
         self.llm_num_layers = llm_config["num_layers"]
 
-    def mm_projector_flops(self, gbs, seq_len, vision_features, llm_features, act_recomp=True):
-        flops1 = 2 * gbs * seq_len * vision_features * llm_features
-        flops2 = 2 * gbs * seq_len * llm_features * llm_features
-        total_flops = 3 * (flops1 + flops2)
-        if act_recomp:
-            total_flops = total_flops * (4/3)
-        return total_flops
-
-    def vision_module_flops(self, gbs, image_size, layers, hs, intermediate_size, llm_features, act_recomp=True, patch_dim=14, in_channels=3):
-        img_h = img_w = image_size
-        img_seq_len = (img_h // patch_dim) * (img_w // patch_dim)
-        attn_flops = 3 * ((8 * hs * hs * img_seq_len) + (4 * img_seq_len * img_seq_len * hs))
-        mlp_flops = 3 * 4 * img_seq_len * hs * intermediate_size
-        transformer_flops = gbs * layers * (attn_flops + mlp_flops)
-        embedding_flops = (
-            3 * 2 * gbs * hs * in_channels * img_h * img_w
-        )
-        mm_flops = self.mm_projector_flops(gbs, img_seq_len, hs, llm_features)
-        total_flops = transformer_flops + embedding_flops + mm_flops
-        if act_recomp:
-            total_flops = total_flops * (4/3)  
-        return total_flops
-
-    def llm_module_flops(self, seq_len, gbs, hidden_size, layers, query_groups, attention_heads, ffn_hidden_size, vocab_size, act_recomp=True):    
-        causal_self_attn = True
-        gated_linear_multiplier = 2
-
-        attention_flops = (
-            3 * 2 * gbs * layers * seq_len * hidden_size * hidden_size *
-            (
-                (query_groups / attention_heads * 2 + 1)
-                + (seq_len / hidden_size * 2 * (0.5 if causal_self_attn else 1))
-                + 1
-            )
-        )
-
-        # --- MLP FLOPs ---
-        mlp_flops = (
-            3 * 2 * gbs * layers * seq_len * hidden_size *
-            (1 + gated_linear_multiplier) *
-            ffn_hidden_size
-        )
-
-        vocab_flops = 3 * 2 * gbs * seq_len * hidden_size * vocab_size
-        total_flops = attention_flops + mlp_flops + vocab_flops
-        if act_recomp:
-            total_flops = total_flops * (4/3)
-        return total_flops
-
     def get_data_dur_info(self, image_list, pos_ids_list):
         data_info = []
         for img, pos_ids in zip(image_list, pos_ids_list):
             img_batch_size = img.shape[0]
             llm_input_seq_len = pos_ids.shape[1]
-            vision_flops = self.vision_module_flops(img_batch_size, self.image_size, self.vision_num_layers, self.vision_hidden_size, self.vision_intermediate_size, self.llm_hidden_size)/1e12
-            llm_flops = self.llm_module_flops(llm_input_seq_len, 1, self.llm_hidden_size, self.llm_num_layers, self.query_groups, self.attention_heads, self.ffn_hidden_size, self.vocab_size, act_recomp=True)/1e12
+            vision_flops = vision_module_flops(img_batch_size, self.image_size, self.vision_num_layers, self.vision_hidden_size, self.vision_intermediate_size, self.llm_hidden_size)/1e12
+            llm_flops = llm_module_flops(llm_input_seq_len, 1, self.llm_hidden_size, self.llm_num_layers, self.query_groups, self.attention_heads, self.ffn_hidden_size, self.vocab_size, act_recomp=True)/1e12
             vision_dur = int(vision_flops / (self.v_thr * self.v_dp_size * self.v_pp_size * self.v_tp_size) * self.scale_factor)
             llm_dur = int(llm_flops / (self.l_thr * self.l_dp_size * self.l_pp_size * self.l_tp_size) * self.scale_factor)
             data_info.append([vision_dur, llm_dur])
@@ -292,12 +244,9 @@ if __name__ == "__main__":
     root_config = load_config()
 
     paths_cfg = root_config.get("paths", {})
-    model_paths_cfg = root_config.get("model_paths", {})
-
-    data_sched_config_resolved = resolve_path(paths_cfg.get("data_scheduler_config"))
-    if data_sched_config_resolved is None:
-        raise ValueError("paths.data_scheduler_config must be provided in the configuration.")
-    data_sched_config_path = str(data_sched_config_resolved)
+    model_paths_cfg = paths_cfg.get("model_dir", {})
+    result_path = str(resolve_path(paths_cfg.get("result_dir")))
+    data_sched_config_path = f"{result_path}/data_sched_config.yaml"
 
     with open(data_sched_config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -310,7 +259,7 @@ if __name__ == "__main__":
     vision_model_size = config["vision_model_size"]
     llm_model_name = config["llm_model_name"]
     llm_model_size = config["llm_model_size"]
-    data_file_path = config["data_file_path"]
+    data_file_path = f"{result_path}/sched_data_idx.json"
     num_training_steps = config["num_training_steps"]
     dataset_path = resolve_path(paths_cfg.get("dataset_yaml"))
     image_folder = resolve_path(paths_cfg.get("image_folder"))

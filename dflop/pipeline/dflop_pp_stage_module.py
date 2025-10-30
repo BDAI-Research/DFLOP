@@ -1,15 +1,12 @@
 # mypy: allow-untyped-defs
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import time
-import numpy as np
 import logging
-import operator
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
-import torch.fx as fx
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.distributed.fsdp import FSDPModule, fully_shard
@@ -19,8 +16,7 @@ from torch.utils._pytree import tree_map_only
 
 from torch.distributed.pipelining._backward import stage_backward, stage_backward_input, stage_backward_weight
 from torch.distributed.pipelining._debug import map_debug_info
-from torch.distributed.pipelining._utils import flatten_args, PipeInfo, validate_tensors_metadata
-from utils.profiler import  AllocatedMemContext
+from torch.distributed.pipelining._utils import flatten_args, validate_tensors_metadata
 
 __all__ = [
     "PipelineStage",

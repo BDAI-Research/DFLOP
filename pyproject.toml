@@ -50,6 +50,7 @@ dependencies = [
   "decord",
   "tyro",
   "ftfy",
+  "ortools",
 ]
 
 [project.optional-dependencies]

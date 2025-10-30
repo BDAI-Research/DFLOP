@@ -14,9 +14,10 @@ paths:
   result_dir: #/path/to/save/results
   model_dir:
     qwen2.5: #/path/to/your/qwen2.5/model
-    llama3: 
+    llama3: #/path/to/your/llama3/model
 hardware:
   n_gpus: # of GPUs to use for profiling
   gpu_memory_gb: # GPU memory in GB per GPU
 training:
   global_batch_size: # Global batch size for training
+  training_steps: # Number of training steps
