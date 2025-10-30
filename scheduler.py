@@ -336,7 +336,6 @@ if __name__ == "__main__":
     generator.manual_seed(seed)
     dataset = LazySupervisedDataset(dataset_path_str, tokenizer, train_config)
 
-    # images, split_sizes, video_idx_in_batch, 
     global_batch_size = config["global_batch_size"]
     data_collator = IlpDataCollator(train_config, image_size, vocab_size, parallel_config, vision_config, llm_config, tokenizer, model_dtype, num_batches, data_file_path)
     sampler = RandomSampler(dataset, generator=generator)
