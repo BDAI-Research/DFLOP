@@ -51,9 +51,9 @@ pip install flash-attn==2.7.3 --no-build-isolation
 - [Video Dataset](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K)
 
 After downloading:
-	•	Place Single Image Dataset and Multiple Image Dataset inside the image_folder
+- Place Single Image Dataset and Multiple Image Dataset inside the image_folder
 (e.g., data/image_folder/)
-	•	Place Video Dataset inside the video_folder
+- Place Video Dataset inside the video_folder
 (e.g., data/video_folder/)
 
 Set these dataset paths in the dataset paths in [`configs/dataset_config.yaml`](configs/dataset_config.yaml).
