@@ -39,7 +39,7 @@ pip install --upgrade pip  # enable PEP 660 support
 pip install -e .[dev] --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
-2. Install additional packages
+2. Install an additional package
 ```bash
 pip install flash-attn==2.7.3 --no-build-isolation
 ```
